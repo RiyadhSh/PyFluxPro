@@ -18,6 +18,7 @@ import netCDF4
 import numpy
 import pandas
 from pandas.errors import ParserError
+import pytz
 import xlwt
 import xlsxwriter
 from PyQt5 import QtWidgets
@@ -25,12 +26,14 @@ from PyQt5 import QtWidgets
 from scripts import cfg
 from scripts import constants as c
 from scripts import meteorologicalfunctions as pfp_mf
+#from scripts import pfp_ck
 from scripts import pfp_log
 from scripts import pfp_plot
 from scripts import pfp_ts
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 class DataStructure(object):
     """
@@ -123,7 +126,23 @@ def CheckTimeStamps(dfs, l1_info, fix=True):
     Author: PRI
     Date: August 2023
     """
-    ts = int(l1_info["read_excel"]["Global"]["time_step"])
+    ts = l1_info["read_excel"]["Global"]["time_step"]
+    if isinstance(ts, str):
+        if ts in ["daily", "weekly", "monthly", "yearly"]:
+            # summary time steps, return without checking
+            return
+        elif ts in ["30", "60"]:
+            ts = int(float(ts))
+        else:
+            msg = "  Time step must be one of '30', '60', 'daily','weekly', 'monthly', 'yearly'"
+            logger.error(msg)
+            return
+    elif isinstance(ts, numbers.Number):
+        ts = int(float(ts))
+        if ts not in [30, 60]:
+            msg = "  Time step must be either 30 or 60"
+            logger.error(msg)
+            return
     results = {}
     sheets = list(dfs.keys())
     msg = " Checking timestamps on sheets " + ",".join(sheets)
@@ -682,11 +701,29 @@ def ReadCSVFile(l1_info):
         # remove duplicate CSV labels
         csv_labels = list(set(csv_labels))
         # check for a timestamp
-        # are we dealing with a FluxNet or AmeriFlux file?
+        # are we dealing with a FluxNet or AmeriFlux HH or WW file?
         if ("TIMESTAMP_END" in headers):
             # if so, we use the timestamp at the end of the period
             df["TIMESTAMP"] = pandas.to_datetime(df["TIMESTAMP_END"].astype("string"),
                                                  errors="raise")
+        # are we dealing with a FluxNet or AmeriFlux DD, MM or YY file?
+        elif ("TIMESTAMP" in headers):
+            ndigits = len(str(df["TIMESTAMP"].values[0]))
+            if ndigits == 8:
+                # it's a DD file
+                df["TIMESTAMP"] = pandas.to_datetime(df["TIMESTAMP"].astype("string"), errors="raise")
+            elif ndigits == 6:
+                # it's an MM file
+                df["TIMESTAMP"] = pandas.to_datetime(df["TIMESTAMP"].astype("string"),
+                                                     format="%Y%m", errors="raise")
+            elif ndigits == 4:
+                # it's a YY file
+                df["TIMESTAMP"] = pandas.to_datetime(df["TIMESTAMP"].astype("string"),
+                                                     format="%Y", errors="raise")
+            else:
+                msg = "  Unrecognised TIMESTAMP format in CSV file"
+                logger.error(msg)
+                raise RuntimeError(msg)
         # maybe an EddyPro output file?
         elif (("date" in headers) and ("time" in headers)):
             # date and time in separate columns, time at end of the period
@@ -741,7 +778,6 @@ def ReadExcelWorkbook(l1_info):
     Author: PRI
     Date: February 2021
     """
-    pfp_log.debug_function_enter(inspect.currentframe().f_code.co_name)
     l1ire = l1_info["read_excel"]
     # get the worksheets named in the control file
     labels = list(l1ire["Variables"].keys())
@@ -855,7 +891,6 @@ def ReadExcelWorkbook(l1_info):
             tmp[l] = dfs[df_name][l1ire["xl_sheets"][df_name]["nc_labels"][l]].copy()
         # copy the new dataframe to the old name
         dfs[df_name] = tmp.copy()
-    pfp_log.debug_function_leave(inspect.currentframe().f_code.co_name)
     # discard empty data frames
     for key in list(dfs.keys()):
         if len(dfs[key]) == 0:
@@ -955,7 +990,6 @@ def read_excel_workbook_get_timestamp(dfs, df_name, l1_info):
 def ReadInputFile(l1_info):
     """
     """
-    pfp_log.debug_function_enter(inspect.currentframe().f_code.co_name)
     l1ire = l1_info["read_excel"]
     # get the input file extension
     file_extension = os.path.splitext(l1ire["Files"]["in_filename"])
@@ -976,7 +1010,6 @@ def ReadInputFile(l1_info):
         msg = "An error occurred reading the input file"
         logger.error(msg)
         raise RuntimeError(msg)
-    pfp_log.debug_function_leave(inspect.currentframe().f_code.co_name)
     return data
 
 def read_eddypro_full(csvname):
@@ -1823,6 +1856,143 @@ def write_csv_fluxnet(cf):
     csvfile.close()
     return 1
 
+def write_csv_oneflux(cfg):
+    """
+    """
+    ok = True
+    # get the file names
+    nc_uri = get_infilenamefromcf(cfg)
+    if not pfp_utils.file_exists(nc_uri, mode="verbose"):
+        ok = False
+        return ok
+    ds = NetCDFRead(nc_uri)
+    ts = int(float(ds.root["Attributes"]["time_step"]))
+    dt = pfp_utils.GetVariable(ds, "DateTime")
+    ts_delta = datetime.timedelta(minutes=ts)
+    start_year = (dt["Data"][0] - ts_delta).year
+    end_year = (dt["Data"][-1] - ts_delta).year
+    years = range(start_year, end_year+1)
+    if "General" not in cfg:
+        cfg["General"] = {}
+    for year in years:
+        msg = " Converting year: " + str(year)
+        logger.info(msg)
+        cfg["General"]["year"] = str(year)
+        if not write_csv_oneflux_year(cfg, ds):
+            ok = False
+            return ok
+    return ok
+
+def write_csv_oneflux_year(cfg, ds):
+    """
+    Purpose:
+     Write ONEFlux CSV files, one calendar year per file.
+    Author: PRI
+    Date: Back in the day
+    """
+    ok = True
+    time_resolution = {30: "halfhourly", 60: "hourly"}
+    ds_labels = sorted(list(ds.root["Variables"].keys()))
+    ts = int(ds.root["Attributes"]["time_step"])
+    ts_delta = datetime.timedelta(minutes=ts)
+    # get the start and end dates
+    year = int(cfg["General"]["year"])
+    start = datetime.datetime(year, 1, 1, 0, 0, 0) + ts_delta
+    end = datetime.datetime(year+1, 1, 1, 0, 0, 0)
+    # datetime array from start to end at ts
+    cdt = numpy.array([d for d in pfp_utils.perdelta(start, end, ts_delta)])
+    nrecs = len(cdt)
+    # dictionary for data
+    data = {"DateTime": {"data": numpy.array(cdt), "format": ""}}
+    dt = pfp_utils.GetVariable(ds, "DateTime")
+    ldt = dt["Data"]
+    indainb, indbina = pfp_utils.FindMatchingIndices(cdt, ldt)
+    # ONEFlux variable labels
+    of_labels = sorted(list(cfg["Variables"].keys()))
+    # loop over the ONEFlux variables and put data in the data dictionary
+    for of_label in of_labels:
+        # label of the variable in the PFP data structure
+        ds_label = cfg["Variables"][of_label]["name"]
+        # dictionary to hold data for this variable
+        data[of_label] = {}
+        # initialise with missing data values
+        data[of_label]["data"] = numpy.full(nrecs, float(-9999))
+        # format of the CSV output specified in control file
+        fmt = cfg["Variables"][of_label]["format"]
+        if "." in fmt:
+            numdec = len(fmt) - (fmt.index(".") + 1)
+            strfmt = "{0:."+str(numdec)+"f}"
+        else:
+            strfmt = "{0:d}"
+        data[of_label]["format"] = strfmt
+        # get the variable from the PFP data structure
+        var = pfp_utils.GetVariable(ds, ds_label)
+        # check to see if the MAD filter was used for this variable
+        if "MAD filter" in var["Attr"]:
+            msg = "  MAD filter applied to " + ds_label + ", checking for unfiltered variable"
+            logger.info(msg)
+            # check to see if the unfiltered variable is in the PFP data structure
+            if ds_label + "_notMAD" in ds_labels:
+                # if it is, then use it
+                msg = "   Using unfiltered variable " + ds_label + "_notMAD"
+                logger.info(msg)
+                var = pfp_utils.GetVariable(ds, ds_label + "_notMAD")
+            else:
+                # if it isn't, then warn the user
+                msg = "   Unfiltered variable (" +  ds_label + "_notMAD" + ") not found, skipping ..."
+                logger.error(msg)
+                continue
+        # check the units
+        if var["Attr"]["units"] != cfg["Variables"][of_label]["units"]:
+            var = pfp_utils.convert_units_func(ds, var, cfg["Variables"][of_label]["units"])
+        data[of_label]["data"][indainb] = var["Data"][indbina]
+    fluxnet_id = ds.root["Attributes"]["site_name"]
+    if "fluxnet_id" in ds.root["Attributes"]:
+        if len(ds.root["Attributes"]["fluxnet_id"]) == 6:
+            fluxnet_id = ds.root["Attributes"]["fluxnet_id"]
+    # get the UTC offset from the time zone name
+    time_zone = ds.root["Attributes"]["time_zone"]
+    now = datetime.datetime.now(pytz.timezone(time_zone))
+    utc_offset = now.utcoffset().total_seconds()/60/60
+    # get the tower height
+    tower_height = pfp_utils.strip_non_numeric(str(ds.root["Attributes"]["tower_height"]))
+    # get the data path and CSV name
+    data_path = os.path.split(ds.info["filepath"])[0]
+    csv_name = fluxnet_id + "_qcv_" + str(year) + ".csv"
+    csv_uri = os.path.join(data_path, csv_name)
+    # open the csv file
+    csv_file = open(csv_uri, 'w')
+    writer = csv.writer(csv_file)
+    # write the header lines
+    writer.writerow(["site", fluxnet_id])
+    writer.writerow(["year", str(year)])
+    writer.writerow(["lat", str(ds.root["Attributes"]["latitude"])])
+    writer.writerow(["lon", str(ds.root["Attributes"]["longitude"])])
+    writer.writerow(["timezone", str(utc_offset)])
+    writer.writerow(["htower", "{:%Y%m%d%H%M}".format(start), str(tower_height)])
+    writer.writerow(["timeres", time_resolution[ts]])
+    writer.writerow(["sc_negl", str(1)])
+    writer.writerow(["notes", "Prepared by PyFluxPro"])
+    # write the data
+    header = ["TIMESTAMP_START","TIMESTAMP_END"]
+    for of_label in of_labels:
+        header.append(of_label)
+    writer.writerow(header)
+    for n in range(nrecs):
+        timestamp_start = "{:%Y%m%d%H%M}".format(data["DateTime"]["data"][n]-ts_delta)
+        timestamp_end = "{:%Y%m%d%H%M}".format(data["DateTime"]["data"][n])
+        data_list = [timestamp_start, timestamp_end]
+        for of_label in of_labels:
+            strfmt = data[of_label]["format"]
+            if "d" in strfmt:
+                data_list.append(strfmt.format(int(round(data[of_label]["data"][n]))))
+            else:
+                data_list.append(strfmt.format(data[of_label]["data"][n]))
+        writer.writerow(data_list)
+    # close the CSV file
+    csv_file.close()
+    return ok
+
 def get_controlfilecontents(cfg_file_uri, mode="verbose"):
     """
     Purpose:
@@ -1984,8 +2154,14 @@ def NetCDFConcatenate(info):
     # and make sure we have all of the meteorological variables
     pfp_ts.CalculateMeteorologicalVariables(ds_out, info)
     # check units of Fc and convert if necessary
-    Fc_list = ["Fco2", "Fco2_single", "Fco2_profile", "Fco2_storage"]
+    Fc_list = ["Fco2", "Sco2_single", "Sco2_profile", "Sco2_storage"]
     pfp_utils.CheckUnits(ds_out, Fc_list, "umol/m^2/s", convert_units=True)
+    # appply the Fco2 storage term if requested
+    netcdf_concatenate_apply_sco2_storage(ds_out, info)
+    ## use the MAD filer if requested
+    #netcdf_concatenate_apply_mad_filter(ds_out, info)
+    ## check for MAD filtered variables, revert to no MAD if requested
+    #netcdf_concatenate_check_mad_filter(ds_out, info)
     # check missing data and QC flags are consistent
     pfp_utils.CheckQCFlags(ds_out)
     # update the coverage statistics
@@ -2000,6 +2176,59 @@ def NetCDFConcatenate(info):
     logger.info(" Writing data to " + os.path.split(inc["out_file_name"])[1])
     # write the concatenated data structure to file
     NetCDFWrite(inc["out_file_name"], ds_out, ndims=inc["NumberOfDimensions"])
+    return
+
+def netcdf_concatenate_apply_sco2_storage(ds, info):
+    """
+    Purpose:
+     Add the storage term to the EC CO2 flux.
+    Usage:
+    Side effects:
+    Author: PRI
+    Date: January 2024
+    """
+    if info["NetCDFConcatenate"]["ApplyFco2Storage"].lower() != "yes":
+        return
+    # sanity checks
+    labels = sorted(list(ds.root["Variables"].keys()))
+    if "Fco2" not in labels:
+        msg = " Fco2 not in data structure, can't apply storage term"
+        logger.warning(msg)
+        return
+    Fco2 = pfp_utils.GetVariable(ds, "Fco2")
+    # has Fco2 already been corrected for storage?
+    descr_attrs = [a for a in Fco2["Attr"] if a[0:11] == "description"]
+    for descr_attr in descr_attrs:
+        if "corrected for storage" in descr_attr.lower():
+            msg = " Fco2 already corrected for storage"
+            logger.warning(msg)
+            return
+    if "Sco2_single" not in labels:
+        pfp_ts.CalculateSco2SinglePoint(ds)
+    labels = sorted(list(ds.root["Variables"].keys()))
+    for sco2_label in ["Sco2", "Sco2_storage", "Sco2_profile", "Sco2_single"]:
+        if sco2_label in labels:
+            msg = " Using " + sco2_label + " as CO2 flux storage term"
+            Sco2 = pfp_utils.GetVariable(ds, sco2_label)
+            break
+    # check the units
+    if Fco2["Attr"]["units"] != Sco2["Attr"]["units"]:
+        msg = " Units of Fco2 (" + Fco2["Attr"]["units"] + ") and Sco2 ("
+        msg += Sco2["Attr"]["units"] + " are different"
+        logger.warning(msg)
+        return
+    # do the business
+    descr_level = "description_" + str(ds.root["Attributes"]["processing_level"])
+    msg = " Adding storage term " + Sco2["Label"] + " to " + Fco2["Label"]
+    logger.info(msg)
+    fco2_mask = numpy.ma.getmaskarray(Fco2["Data"])
+    sco2_mask = numpy.ma.getmaskarray(Sco2["Data"])
+    Fco2["Data"] = Fco2["Data"] + Sco2["Data"]
+    idx = numpy.where((fco2_mask==False) & (sco2_mask==True))[0]
+    Fco2["Flag"][idx] = int(25)
+    tmp = "corrected for storage using " + Sco2["Label"]
+    pfp_utils.append_to_attribute(Fco2["Attr"], {descr_level: tmp})
+    pfp_utils.CreateVariable(ds, Fco2)
     return
 
 def netcdf_concatenate_rename_output(data, out_file_name):
@@ -2126,9 +2355,9 @@ def netcdf_concatenate_create_ds_out(data, info):
     """
     logger.info(" Creating the output data structure")
     inc = info["NetCDFConcatenate"]
-    # get the time step
     # get the file names in data
     file_names = list(data.keys())
+    # get the time step
     ts = int(float(data[file_names[0]].root["Attributes"]["time_step"]))
     tsd = datetime.timedelta(minutes=ts)
     level = data[file_names[0]].root["Attributes"]["processing_level"]
@@ -2150,21 +2379,21 @@ def netcdf_concatenate_create_ds_out(data, info):
     pfp_utils.CreateVariable(ds_out, dt)
     # create the netCDF time variable
     pfp_utils.get_nctime_from_datetime(ds_out)
-    time_out = pfp_utils.GetVariable(ds_out, "time")
     # make the empty variables
     attr_out = {}
     for label in inc["labels"]:
         ds_out.root["Variables"][label] = pfp_utils.CreateEmptyVariable(label, nrecs, out_type="ndarray")
         attr_out[label] = []
     # now loop over the files in chronological order
+    dt_out = pfp_utils.GetVariable(ds_out, "DateTime")
     for n, file_name in enumerate(inc["chrono_files"]):
         # copy the global attributes
         for gattr in data[file_name].root["Attributes"]:
             ds_out.root["Attributes"][gattr] = data[file_name].root["Attributes"][gattr]
         # get the time from the input file
-        time_in = pfp_utils.GetVariable(data[file_name], "time")
+        dt_in = pfp_utils.GetVariable(data[file_name], "DateTime")
         # find the indices of matching times
-        indsa, indsb = pfp_utils.FindMatchingIndices(time_out["Data"], time_in["Data"])
+        indsa, indsb = pfp_utils.FindMatchingIndices(dt_out["Data"], dt_in["Data"])
         # loop over the variables
         for label in inc["labels"]:
             dout = ds_out.root["Variables"][label]
@@ -2207,7 +2436,11 @@ def netcdf_concatenate_keep_subset(ds_out, info):
     inc_labels = inc["SeriesToKeep"]
     inc_labels.append("DateTime")
     labels = list(ds_out.root["Variables"].keys())
+    # any variable that is not included is excluded
     exc_labels = [l for l in labels if l not in inc_labels]
+    # except for variables ending in "_notMAD" because these must be preserved
+    # for use in the input files for ONEFlux
+    exc_labels = [l for l in exc_labels if l[-7:] != "_notMAD"]
     for label in exc_labels:
         pfp_utils.DeleteVariable(ds_out, label)
     return
@@ -2741,7 +2974,7 @@ def nc_read_series(nc_file, checktimestep=True, fixtimestepmethod="round"):
             pfp_utils.FixTimeStep(ds, fixtimestepmethod=fixtimestepmethod)
     # tell the user when the data starts and ends
     ldt = ds.root["Variables"]["DateTime"]["Data"]
-    msg = " Got data from " + ldt[0].strftime("%Y-%m-%d %H:%M:%S")
+    msg = "  Got data from " + ldt[0].strftime("%Y-%m-%d %H:%M:%S")
     msg += " to " + ldt[-1].strftime("%Y-%m-%d %H:%M:%S")
     logger.info(msg)
     ds.info["returncodes"]["value"] = 0
@@ -3373,7 +3606,7 @@ def xl_write_SOLOStats(ds, l5_info):
     # open the Excel file
     xlfile = xlwt.Workbook()
     # list of outputs to write to the Excel file
-    date_list = ["startdate", "enddate"]
+    date_list = ["startdate", "middate", "enddate"]
     # loop over the series that have been gap filled using ACCESS data
     d_xf = xlwt.easyxf(num_format_str='dd/mm/yyyy hh:mm')
     outputs = list(l5io.keys())
@@ -3512,7 +3745,7 @@ def xl_write_series(ds, xlfullname, outputlist=None):
         variablelist = list(ds.root["Variables"].keys())
         nRecs = len(ds.root["Variables"][variablelist[0]]["Data"])
     # open the Excel file
-    msg = " Opening and writing Excel file " + os.path.basename(xlfullname)
+    msg = " Opening and writing Excel file " + os.path.basename(xlfullname) + " (xlwt)"
     logger.info(msg)
     xlfile = xlwt.Workbook(encoding="latin-1")
     # set the datemode
@@ -3632,7 +3865,7 @@ def xlsx_write_series(ds, xlsxfullname, outputlist=None):
         variablelist = list(ds.root["Variables"].keys())
         nRecs = len(ds.root["Variables"][variablelist[0]]["Data"])
     # open the Excel file
-    msg = " Opening and writing Excel file " + os.path.basename(xlsxfullname)
+    msg = " Opening and writing Excel file " + os.path.basename(xlsxfullname) + " (xlsxwriter)"
     logger.info(msg)
     if "xl_datemode" not in ds.root["Attributes"]:
         if platform.system() == "darwin":

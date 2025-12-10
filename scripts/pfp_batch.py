@@ -5,6 +5,7 @@ import os
 import sys
 import traceback
 # 3rd party modules
+import dateutil
 # PFP modules
 from scripts import pfp_clim
 from scripts import pfp_compliance
@@ -13,12 +14,30 @@ from scripts import pfp_cpd_mchugh
 from scripts import pfp_cpd_mcnew
 from scripts import pfp_io
 from scripts import pfp_levels
+from scripts import pfp_log
 from scripts import pfp_mpt
 from scripts import pfp_plot
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
+class Bunch:
+    """
+    Constructor class for dummy object with attributes defined by keywords
+    when instantiated.
+    """
+    def __init__(self, **kwds):
+        self.__dict__.update(kwds)
+def check_file_exists(file_name):
+    ok = True
+    if not os.path.isfile(file_name):
+        msg = file_name + " not found."
+        logger.error("")
+        logger.error(msg)
+        logger.error("")
+        ok = False
+    return ok
 def do_batch_fingerprints(cfg):
     """
     Purpose:
@@ -34,148 +53,174 @@ def do_batch_fingerprints(cfg):
     cfg_fp["Files"] = {"file_path": file_path, "in_filename": os.path.split(file_name)[1],
                        "plot_path": plot_path}
     cfg_fp["Options"] = {"call_mode": "batch", "show_plots": "No"}
-    msg = "Doing fingerprint plots using " + cfg_fp["Files"]["in_filename"]
+    msg = " Doing fingerprint plots using " + cfg_fp["Files"]["in_filename"]
     logger.info(msg)
     pfp_plot.plot_fingerprint(cfg_fp)
     logger.info("Finished fingerprint plots")
     return
+def do_batch_stacked_timeseries(cfg, ds):
+    """
+    Purpose:
+     Plot stacked timeseries for the level being processed.
+    Author: PRI
+    Date: August 2024
+    """
+    msg = "Doing stacked timeseries plots"
+    logger.info(msg)
+    ldt = pfp_utils.GetVariable(ds, "DateTime")
+    end = ldt["Data"][-1]
+    start = end - dateutil.relativedelta.relativedelta(months=1)
+    radn_labels = ["Fsd", "Fsu", "Fld", "Flu", "Fn"]
+    flux_labels = ["Fh", "Fe", "Fco2", "Fm"]
+    met_labels = ["Precip", "Ta", "RH", "Ws", "Wd", "ps"]
+    soil_labels = ["Ts", "Fg", "Sws"]
+    plot_labels = radn_labels + flux_labels + met_labels + soil_labels
+    cfg["Options"]["plot_stacked_timeseries"] = {"plot_labels": plot_labels,
+                                                   "start": start, "end": end,}
+    pfp_plot.plot_stacked_timeseries(cfg, ds, start=start, end=end)
+    msg = "Finished stacked timeseries plots"
+    logger.info(msg)
+    return
 def do_L1_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting L1 processing with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf_l1 = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.l1_update_controlfile(cf_l1):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting L1 processing with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf_l1:
-                cf_l1["Options"] = {}
-            cf_l1["Options"]["call_mode"] = "batch"
-            cf_l1["Options"]["show_plots"] = "No"
-            if pfp_compliance.check_l1_controlfile(cf_l1):
-                ds1 = pfp_levels.l1qc(cf_l1)
-                outfilename = pfp_io.get_outfilenamefromcf(cf_l1)
-                pfp_io.NetCDFWrite(outfilename, ds1)
-                msg = "Finished L1 processing with " + cf_file_name[1]
-                logger.info(msg)
-                logger.info("")
-            else:
+            cf_l1 = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.l1_update_controlfile(cf_l1, call_mode="batch"):
+                msg = "Error occurred updating L1 controlfile"
+                logger.error(msg)
+                continue
+            if not pfp_compliance.check_l1_controlfile(cf_l1):
                 msg = "Error occurred checking compliance of L1 controlfile"
                 logger.error(msg)
+                continue
+            ds1 = pfp_levels.l1qc(cf_l1)
+            outfilename = pfp_io.get_outfilenamefromcf(cf_l1)
+            pfp_io.NetCDFWrite(outfilename, ds1)
+            msg = "Finished L1 processing with " + cf_file_name[1]
+            logger.info(msg)
+            logger.info("")
         except Exception:
             msg = "Error occurred during L1 processing " + cf_file_name[1]
             logger.error(msg)
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_L2_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting L2 processing with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf_l2 = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.l2_update_controlfile(cf_l2):
+            # get the control file name for this site at this level
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting L2 processing with " + cf_file_name[1]
+            logger.info(msg)
+            # check to see if the control file exists
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf_l2:
-                cf_l2["Options"] = {}
-            cf_l2["Options"]["call_mode"] = "batch"
-            cf_l2["Options"]["show_plots"] = "No"
-            infilename = pfp_io.get_infilenamefromcf(cf_l2)
-            ds1 = pfp_io.NetCDFRead(infilename)
-            if ds1.info["returncodes"]["value"] != 0:
-                return
-            pfp_compliance.check_l2_options(cf_l2, ds1)
-            if ds1.info["returncodes"]["value"] != 0:
-                return
-            if pfp_compliance.check_l2_controlfile(cf_l2):
-                ds2 = pfp_levels.l2qc(cf_l2, ds1)
-                outfilename = pfp_io.get_outfilenamefromcf(cf_l2)
-                pfp_io.NetCDFWrite(outfilename, ds2)
-                msg = "Finished L2 processing with " + cf_file_name[1]
-                logger.info(msg)
-                if "Plots" in list(cf_l2.keys()):
-                    logger.info("Plotting L1 and L2 data")
-                    for nFig in list(cf_l2['Plots'].keys()):
-                        if "(disabled)" in nFig:
-                            continue
-                        plt_cf = cf_l2['Plots'][str(nFig)]
-                        if 'type' in plt_cf.keys():
-                            if str(plt_cf['type']).lower() == 'xy':
-                                pfp_plot.plotxy(cf_l2, nFig, plt_cf, ds1, ds2)
-                            else:
-                                pfp_plot.plottimeseries(cf_l2, nFig, ds1, ds2)
-                        else:
-                            pfp_plot.plottimeseries(cf_l2, nFig, ds1, ds2)
-                    logger.info("Finished plotting L1 and L2 data")
-                logger.info("")
-            else:
+            # get the contents of the control file
+            cf_l2 = pfp_io.get_controlfilecontents(cf_level[i])
+            # update the L2 control file (legacy)
+            if not pfp_compliance.l2_update_controlfile(cf_l2, call_mode="batch"):
+                msg = "Error occurred updating L2 controlfile"
+                logger.error(msg)
+                continue
+            # check the contents of the L2 control file
+            if not pfp_compliance.check_l2_controlfile(cf_l2):
                 msg = "Error occurred checking compliance of L2 controlfile"
                 logger.error(msg)
+                continue
+            # get the input file name
+            infilename = pfp_io.get_infilenamefromcf(cf_l2)
+            # read the input file
+            ds1 = pfp_io.NetCDFRead(infilename)
+            # check sonic and IRGA types in L1 netCDF and L2 control file agree
+            pfp_compliance.check_l2_options(cf_l2, ds1)
+            # do the business
+            ds2 = pfp_levels.l2qc(cf_l2, ds1)
+            # get the output file name
+            outfilename = pfp_io.get_outfilenamefromcf(cf_l2)
+            # write the output netCDF file
+            pfp_io.NetCDFWrite(outfilename, ds2)
+            msg = "Finished L2 processing with " + cf_file_name[1]
+            logger.info(msg)
+            logger.info("")
         except Exception:
             msg = "Error occurred during L2 processing " + cf_file_name[1]
             logger.error(msg)
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
+def do_l2_plots_batch(cfg, ds1, ds2):
+    if "Plots" in list(cfg.keys()):
+        logger.info("Plotting L1 and L2 data")
+        for nFig in list(cfg['Plots'].keys()):
+            if "(disabled)" in nFig:
+                continue
+            plt_cf = cfg['Plots'][str(nFig)]
+            if 'type' in plt_cf.keys():
+                if str(plt_cf['type']).lower() == 'xy':
+                    pfp_plot.plotxy(cfg, nFig, plt_cf, ds1, ds2)
+                else:
+                    pfp_plot.plottimeseries(cfg, nFig, ds1, ds2)
+            else:
+                pfp_plot.plottimeseries(cfg, nFig, ds1, ds2)
+        logger.info("Finished plotting L1 and L2 data")
+    return
 def do_L3_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting L3 processing with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf_l3 = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.l3_update_controlfile(cf_l3):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting L3 processing with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf_l3:
-                cf_l3["Options"] = {}
-            cf_l3["Options"]["call_mode"] = "batch"
-            cf_l3["Options"]["show_plots"] = "No"
+            cf_l3 = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.l3_update_controlfile(cf_l3, call_mode="batch"):
+                msg = "Error occurred updating L3 controlfile"
+                logger.error(msg)
+                continue
+            if not pfp_compliance.check_l3_controlfile(cf_l3):
+                msg = "Error occurred checking compliance of L3 controlfile"
+                logger.error(msg)
+                continue
             infilename = pfp_io.get_infilenamefromcf(cf_l3)
             ds2 = pfp_io.NetCDFRead(infilename)
-            if ds2.info["returncodes"]["value"] != 0:
-                return
-            if not pfp_compliance.check_l3_controlfile(cf_l3):
-                return
             ds3 = pfp_levels.l3qc(cf_l3, ds2)
             outfilename = pfp_io.get_outfilenamefromcf(cf_l3)
             pfp_io.NetCDFWrite(outfilename, ds3)
             msg = "Finished L3 processing with " + cf_file_name[1]
             logger.info(msg)
-            if "Plots" in list(cf_l3.keys()):
-                logger.info("Plotting L3 data")
-                for nFig in list(cf_l3['Plots'].keys()):
-                    if "(disabled)" in nFig:
-                        continue
-                    plt_cf = cf_l3['Plots'][str(nFig)]
-                    if 'type' in plt_cf.keys():
-                        if str(plt_cf['type']).lower() == 'xy':
-                            pfp_plot.plotxy(cf_l3, nFig, plt_cf, ds2, ds3)
-                        else:
-                            pfp_plot.plottimeseries(cf_l3, nFig, ds2, ds3)
-                    else:
-                        pfp_plot.plottimeseries(cf_l3, nFig, ds2, ds3)
-                logger.info("Finished plotting L3 data")
+            logger.info("Plotting L3 data")
+            do_l3_plots_batch(cf_l3, ds2, ds3)
+            logger.info("Finished L3 plotting")
+            # plot the L3 fingerprints
+            logger.info("Plotting L3 fingerprints")
+            do_batch_fingerprints(cf_l3)
+            logger.info("Finished L3 fingerprints")
+            # do the stacked time series plots
+            logger.info("Plotting stacked timeseries")
+            do_batch_stacked_timeseries(cf_l3, ds3)
+            logger.info("Finished stacked timeseries")
             logger.info("")
         except Exception:
             msg = "Error occurred during L3 processing " + cf_file_name[1]
@@ -183,49 +228,23 @@ def do_L3_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
-def do_ecostress_batch(main_ui, cf_level):
-    for i in list(cf_level.keys()):
-        # check the stop flag
-        if main_ui.stop_flag:
-            # break out of the loop if user requested stop
-            break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting ECOSTRESS output with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
-        try:
-            cf = pfp_io.get_controlfilecontents(cf_level[i])
-            pfp_io.write_csv_ecostress(cf)
-            msg = "Finished ECOSTRESS output with " + cf_file_name[1]
-            logger.info(msg)
-            logger.info("")
-        except Exception:
-            msg = "Error occurred during ECOSTRESS output with " + cf_file_name[1]
-            logger.error(msg)
-            error_message = traceback.format_exc()
-            logger.error(error_message)
-            continue
-    return 1
-def do_fluxnet_batch(main_ui, cf_level):
-    for i in list(cf_level.keys()):
-        # check the stop flag
-        if main_ui.stop_flag:
-            # break out of the loop if user requested stop
-            break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting FluxNet output with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
-        cf = pfp_io.get_controlfilecontents(cf_level[i])
-        pfp_io.write_csv_fluxnet(cf)
-        msg = "Finished FluxNet output with " + cf_file_name[1]
-        logger.info(msg)
-        logger.info("")
-    return 1
+    return ok
+def do_l3_plots_batch(cfg, ds2, ds3):
+    if "Plots" in list(cfg.keys()):
+        for nFig in list(cfg['Plots'].keys()):
+            if "(disabled)" in nFig:
+                continue
+            plt_cf = cfg['Plots'][str(nFig)]
+            if 'type' in plt_cf.keys():
+                if str(plt_cf['type']).lower() == 'xy':
+                    pfp_plot.plotxy(cfg, nFig, plt_cf, ds2, ds3)
+                else:
+                    pfp_plot.plottimeseries(cfg, nFig, ds2, ds3)
+            else:
+                pfp_plot.plottimeseries(cfg, nFig, ds2, ds3)
+    return
 def do_reddyproc_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
@@ -234,29 +253,50 @@ def do_reddyproc_batch(main_ui, cf_level):
         cf_file_name = os.path.split(cf_level[i])
         msg = "Starting REddyProc output with " + cf_file_name[1]
         logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
+        if not check_file_exists(cf_level[i]):
+            continue
         cf = pfp_io.get_controlfilecontents(cf_level[i])
         pfp_io.write_tsv_reddyproc(cf)
         msg = "Finished REddyProc output with " + cf_file_name[1]
         logger.info(msg)
         logger.info("")
-    return 1
+    return ok
+def do_oneflux_batch(main_ui, cf_level):
+    ok = True
+    for i in list(cf_level.keys()):
+        # check the stop flag
+        if main_ui.stop_flag:
+            # break out of the loop if user requested stop
+            break
+        cf_file_name = os.path.split(cf_level[i])
+        msg = "Starting ONEFlux output with " + cf_file_name[1]
+        logger.info(msg)
+        if not check_file_exists(cf_level[i]):
+            continue
+        cf = pfp_io.get_controlfilecontents(cf_level[i])
+        pfp_io.write_csv_oneflux(cf)
+        msg = "Finished ONEFlux output with " + cf_file_name[1]
+        logger.info(msg)
+        logger.info("")
+    return ok
 def do_concatenate_batch(main_ui, cf_level):
+    ok = True
     sites = sorted(list(cf_level.keys()), key=int)
     for i in sites:
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting concatenation with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
+            if not check_file_exists(cf_level[i]):
+                continue
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting concatenation with " + cf_file_name[1]
+            logger.info(msg)
             cf_cc = pfp_io.get_controlfilecontents(cf_level[i])
             if not pfp_compliance.concatenate_update_controlfile(cf_cc):
+                msg = "Error occurred updating concatenation controlfile"
+                logger.error(msg)
                 continue
             info = pfp_compliance.ParseConcatenateControlFile(cf_cc)
             if not info["NetCDFConcatenate"]["OK"]:
@@ -266,8 +306,6 @@ def do_concatenate_batch(main_ui, cf_level):
             pfp_io.NetCDFConcatenate(info)
             msg = "Finished concatenation with " + cf_file_name[1]
             logger.info(msg)
-            # do the CF compliance check
-            #do_batch_cfcheck(cf_cc)
             # and then plot the fingerprints for the concatenated files
             do_batch_fingerprints(cf_cc)
             logger.info("")
@@ -277,21 +315,24 @@ def do_concatenate_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_climatology_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting climatology with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
+        if not check_file_exists(cf_level[i]):
+            continue
         try:
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting climatology with " + cf_file_name[1]
+            logger.info(msg)
             cf_ct = pfp_io.get_controlfilecontents(cf_level[i])
             if not pfp_compliance.climatology_update_controlfile(cf_ct):
+                msg = "Error occurred updating climatology controlfile"
+                logger.error(msg)
                 continue
             pfp_clim.climatology(cf_ct)
             msg = "Finished climatology with " + cf_file_name[1]
@@ -303,26 +344,25 @@ def do_climatology_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_cpd_barr_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting CPD (Barr) with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.cpd_barr_update_controlfile(cf):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting CPD (Barr) with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf:
-                cf["Options"] = {}
-            cf["Options"]["call_mode"] = "batch"
-            cf["Options"]["show_plots"] = "No"
+            cf = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.cpd_barr_update_controlfile(cf, call_mode="batch"):
+                msg = "Error occurred updating CPD (Barr) controlfile"
+                logger.error(msg)
+                continue
             pfp_cpd_barr.cpd_barr_main(cf)
             msg = "Finished CPD (Barr) with " + cf_file_name[1]
             logger.info(msg)
@@ -333,26 +373,25 @@ def do_cpd_barr_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_cpd_mchugh_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting CPD (McHugh) with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.cpd_mchugh_update_controlfile(cf):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting CPD (McHugh) with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf:
-                cf["Options"] = {}
-            cf["Options"]["call_mode"] = "batch"
-            cf["Options"]["show_plots"] = "No"
+            cf = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.cpd_mchugh_update_controlfile(cf, call_mode="batch"):
+                msg = "Error occurred updating CPD (McHugh) controlfile"
+                logger.error(msg)
+                continue
             pfp_cpd_mchugh.cpd_mchugh_main(cf)
             msg = "Finished CPD (McHugh) with " + cf_file_name[1]
             logger.info(msg)
@@ -363,26 +402,25 @@ def do_cpd_mchugh_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_cpd_mcnew_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting CPD (McNew) with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.cpd_mcnew_update_controlfile(cf):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting CPD (McNew) with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf:
-                cf["Options"] = {}
-            cf["Options"]["call_mode"] = "batch"
-            cf["Options"]["show_plots"] = "No"
+            cf = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.cpd_mcnew_update_controlfile(cf, call_mode="batch"):
+                msg = "Error occurred updating CPD (McNew) controlfile"
+                logger.error(msg)
+                continue
             pfp_cpd_mcnew.cpd_mcnew_main(cf)
             msg = "Finished CPD (McNew) with " + cf_file_name[1]
             logger.info(msg)
@@ -393,26 +431,25 @@ def do_cpd_mcnew_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_mpt_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting MPT with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.mpt_update_controlfile(cf):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting MPT with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf:
-                cf["Options"] = {}
-            cf["Options"]["call_mode"] = "batch"
-            cf["Options"]["show_plots"] = "No"
+            cf = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.mpt_update_controlfile(cf, call_mode="batch"):
+                msg = "Error occurred updating MPT controlfile"
+                logger.error(msg)
+                continue
             pfp_mpt.mpt_main(cf)
             msg = "Finished MPT with " + cf_file_name[1]
             logger.info(msg)
@@ -423,37 +460,33 @@ def do_mpt_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_L4_batch(main_ui, cf_level):
+    ok = True
     sites = sorted(list(cf_level.keys()), key=int)
     for i in sites:
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting L4 processing with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf_l4 = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.l4_update_controlfile(cf_l4):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting L4 processing with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf_l4:
-                cf_l4["Options"] = {}
-            cf_l4["Options"]["call_mode"] = "batch"
-            cf_l4["Options"]["show_plots"] = "No"
+            cf_l4 = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.l4_update_controlfile(cf_l4, call_mode="batch"):
+                msg = "Error occurred updating L4 controlfile"
+                logger.error(msg)
+                continue
             infilename = pfp_io.get_infilenamefromcf(cf_l4)
             ds3 = pfp_io.NetCDFRead(infilename)
-            if ds3.info["returncodes"]["value"] != 0: return
             ds4 = pfp_levels.l4qc(None, cf_l4, ds3)
             outfilename = pfp_io.get_outfilenamefromcf(cf_l4)
             pfp_io.NetCDFWrite(outfilename, ds4)
             msg = "Finished L4 processing with " + cf_file_name[1]
             logger.info(msg)
-            # do the CF compliance check
-            #do_batch_cfcheck(cf_l4)
             # plot the L4 fingerprints
             do_batch_fingerprints(cf_l4)
             logger.info("")
@@ -463,96 +496,87 @@ def do_L4_batch(main_ui, cf_level):
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_L5_batch(main_ui, cf_level):
+    ok = True
     sites = sorted(list(cf_level.keys()), key=int)
     for i in sites:
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting L5 processing with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf_l5 = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.l5_update_controlfile(cf_l5):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting L5 processing with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf_l5:
-                cf_l5["Options"] = {}
-            cf_l5["Options"]["call_mode"] = "batch"
-            cf_l5["Options"]["show_plots"] = "No"
-            infilename = pfp_io.get_infilenamefromcf(cf_l5)
-            ds4 = pfp_io.NetCDFRead(infilename)
-            if ds4.info["returncodes"]["value"] != 0:
-                return
-            if pfp_compliance.check_l5_controlfile(cf_l5):
-                ds5 = pfp_levels.l5qc(None, cf_l5, ds4)
-                outfilename = pfp_io.get_outfilenamefromcf(cf_l5)
-                pfp_io.NetCDFWrite(outfilename, ds5)
-                msg = "Finished L5 processing with " + cf_file_name[1]
-                logger.info(msg)
-                # do the CF compliance check
-                #do_batch_cfcheck(cf_l5)
-                # plot the L5 fingerprints
-                do_batch_fingerprints(cf_l5)
-                logger.info("")
-            else:
+            cf_l5 = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.l5_update_controlfile(cf_l5, call_mode="batch"):
+                msg = "Error occurred updating L5 controlfile"
+                logger.error(msg)
+                continue
+            if not pfp_compliance.check_l5_controlfile(cf_l5):
                 msg = "Error occurred checking compliance of L5 controlfile"
                 logger.error(msg)
+                continue
+            infilename = pfp_io.get_infilenamefromcf(cf_l5)
+            ds4 = pfp_io.NetCDFRead(infilename)
+            ds5 = pfp_levels.l5qc(None, cf_l5, ds4)
+            outfilename = pfp_io.get_outfilenamefromcf(cf_l5)
+            pfp_io.NetCDFWrite(outfilename, ds5)
+            msg = "Finished L5 processing with " + cf_file_name[1]
+            logger.info(msg)
+            # plot the L5 fingerprints
+            do_batch_fingerprints(cf_l5)
+            logger.info("")
         except Exception:
             msg = "Error occurred during L5 with " + cf_file_name[1]
             logger.error(msg)
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_L6_batch(main_ui, cf_level):
+    ok = True
     for i in list(cf_level.keys()):
         # check the stop flag
         if main_ui.stop_flag:
             # break out of the loop if user requested stop
             break
-        cf_file_name = os.path.split(cf_level[i])
-        msg = "Starting L6 processing with " + cf_file_name[1]
-        logger.info(msg)
-        if not check_file_exits(cf_level[i]):
-            return 0
         try:
-            cf_l6 = pfp_io.get_controlfilecontents(cf_level[i])
-            if not pfp_compliance.l6_update_controlfile(cf_l6):
+            cf_file_name = os.path.split(cf_level[i])
+            msg = "Starting L6 processing with " + cf_file_name[1]
+            logger.info(msg)
+            if not check_file_exists(cf_level[i]):
                 continue
-            if "Options" not in cf_l6:
-                cf_l6["Options"] = {}
-            cf_l6["Options"]["call_mode"] = "batch"
-            cf_l6["Options"]["show_plots"] = "No"
-            infilename = pfp_io.get_infilenamefromcf(cf_l6)
-            ds5 = pfp_io.NetCDFRead(infilename)
-            if ds5.info["returncodes"]["value"] != 0:
-                return
-            if pfp_compliance.check_l6_controlfile(cf_l6):
-                ds6 = pfp_levels.l6qc(None, cf_l6, ds5)
-                outfilename = pfp_io.get_outfilenamefromcf(cf_l6)
-                pfp_io.NetCDFWrite(outfilename, ds6)
-                msg = "Finished L6 processing with " + cf_file_name[1]
-                logger.info(msg)
-                # do the CF compliance check
-                #do_batch_cfcheck(cf_l6)
-                logger.info("")
-            else:
+            cf_l6 = pfp_io.get_controlfilecontents(cf_level[i])
+            if not pfp_compliance.l6_update_controlfile(cf_l6, call_mode="batch"):
+                msg = "Error occurred updating L6 controlfile"
+                logger.error(msg)
+                continue
+            if not pfp_compliance.check_l6_controlfile(cf_l6):
                 msg = "Error occurred checking compliance of L6 controlfile"
                 logger.error(msg)
+                continue
+            infilename = pfp_io.get_infilenamefromcf(cf_l6)
+            ds5 = pfp_io.NetCDFRead(infilename)
+            ds6 = pfp_levels.l6qc(None, cf_l6, ds5)
+            outfilename = pfp_io.get_outfilenamefromcf(cf_l6)
+            pfp_io.NetCDFWrite(outfilename, ds6)
+            msg = "Finished L6 processing with " + cf_file_name[1]
+            logger.info(msg)
+            # do the CF compliance check
+            #do_batch_cfcheck(cf_l6)
+            logger.info("")
         except Exception:
             msg = "Error occurred during L6 with " + cf_file_name[1]
             logger.error(msg)
             error_message = traceback.format_exc()
             logger.error(error_message)
             continue
-    return 1
+    return ok
 def do_levels_batch(main_ui):
-    logger = logging.getLogger("pfp_log")
     if main_ui.mode == "interactive":
         tab_index_running = main_ui.tabs.tab_index_running
         cf_batch = main_ui.tabs.tab_dict[tab_index_running].get_data_from_model()
@@ -577,7 +601,7 @@ def do_levels_batch(main_ui):
         logger.error(msg)
         sys.exit()
     processing_levels = ["l1", "l2", "l3",
-                         "ecostress", "fluxnet", "reddyproc",
+                         "nc2csv_oneflux",
                          "concatenate", "climatology",
                          "cpd_barr", "cpd_mchugh", "cpd_mcnew", "mpt",
                          "l4", "l5", "l6"]
@@ -593,74 +617,164 @@ def do_levels_batch(main_ui):
         if level.lower() == "l1":
             # L1 processing
             if not do_L1_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "l2":
             # L2 processing
             if not do_L2_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "l3":
             # L3 processing
             if not do_L3_batch(main_ui, cf_batch["Levels"][level]):
-                break
-        elif level.lower() == "ecostress":
-            # convert netCDF files to ECOSTRESS CSV files
-            if not do_ecostress_batch(main_ui, cf_batch["Levels"][level]):
-                break
-        elif level.lower() == "fluxnet":
-            # convert netCDF files to FluxNet CSV files
-            if not do_fluxnet_batch(main_ui, cf_batch["Levels"][level]):
-                break
-        elif level.lower() == "reddyproc":
-            # convert netCDF files to REddyProc CSV files
-            if not do_reddyproc_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "concatenate":
             # concatenate netCDF files
             if not do_concatenate_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
+        elif level.lower() == "nc2csv_oneflux":
+            # convert netCDF files to ONEFlux CSV files
+            if not do_oneflux_batch(main_ui, cf_batch["Levels"][level]):
+                continue
+        elif level.lower() == "reddyproc":
+            # convert netCDF files to REddyProc CSV files
+            if not do_reddyproc_batch(main_ui, cf_batch["Levels"][level]):
+                continue
         elif level.lower() == "climatology":
             # climatology
             if not do_climatology_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "cpd_barr":
             # ustar threshold from change point detection
             if not do_cpd_barr_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "cpd_mchugh":
             # ustar threshold from change point detection
             if not do_cpd_mchugh_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "cpd_mcnew":
             # ustar threshold from change point detection
             if not do_cpd_mcnew_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "mpt":
             # ustar threshold from change point detection
             if not do_mpt_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "l4":
             # L4 processing
             if not do_L4_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "l5":
             # L5 processing
             if not do_L5_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
         elif level.lower() == "l6":
             # L6 processing
             if not do_L6_batch(main_ui, cf_batch["Levels"][level]):
-                break
+                continue
     end = datetime.datetime.now()
     msg = " Finished batch processing at " + end.strftime("%Y%m%d%H%M")
     logger.info(msg)
     return
-def check_file_exits(file_name):
-    if not os.path.isfile(file_name):
-        msg = file_name + " not found."
-        logger.error("")
-        logger.error(msg)
-        logger.error("")
-        ok = 0
+def do_sites_batch(main_ui):
+    """
+    Purpose:
+     Function to farm out batch processing by site across multiple CPUs.
+     This function controls the multiprocessing, do_sites_batch_dispatcher
+     does the work.
+
+     Processing a site is independent of processing any other site.  This means
+     that we can use multiprocessing to processes as many sites as possible
+     in paralell because they will not interfere with each other.  This can't be
+     done for batch processing by levels since the levels must be performed in
+     the correct order.
+    Usage:
+    Side effects:
+    Author: PRI
+    Date: April 2022
+    """
+    if main_ui.mode == "interactive":
+        tab_index_running = main_ui.tabs.tab_index_running
+        cf_batch = main_ui.tabs.tab_dict[tab_index_running].get_data_from_model()
+    elif main_ui.mode == "batch":
+        cf_batch = main_ui.cfg
     else:
-        ok = 1
-    return ok
+        msg = "Unrecognised option for mode (" + main_ui.mode + ")"
+        logger.error(msg)
+        raise RuntimeError
+    start = datetime.datetime.now()
+    msg = "Started batch processing at " + start.strftime("%Y%m%d%H%M")
+    logger.info(msg)
+    # loop over the sites
+    for site in list(cf_batch["Sites"].keys()):
+        # get the control files for this site
+        cfg_site = cf_batch["Sites"][site]
+        # loop over the control files
+        for n in sorted(list(cfg_site.keys()), key=int):
+            # get the control file name
+            cfg_name = cfg_site[n]
+            # get the control file contents
+            cfg = pfp_io.get_controlfilecontents(cfg_name)
+            # get the processing level
+            level = str(cfg["level"])
+            # get the batch routine argument, this is a dictionary with a single
+            # entry containing the name of the control file to process
+            cf_level = {n: cf_batch["Sites"][site][n]}
+            # call the batch routine based on the processing level
+            if level.lower() == "l1":
+                # L1 processing
+                if not do_L1_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "l2":
+                # L2 processing
+                if not do_L2_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "l3":
+                # L3 processing
+                if not do_L3_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "concatenate":
+                # concatenate netCDF files
+                if not do_concatenate_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "nc2csv_oneflux":
+                # convert netCDF files to ONEFlux CSV files
+                if not do_oneflux_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "reddyproc":
+                # convert netCDF files to REddyProc CSV files
+                if not do_reddyproc_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "climatology":
+                # climatology
+                if not do_climatology_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "cpd_barr":
+                # ustar threshold from change point detection
+                if not do_cpd_barr_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "cpd_mchugh":
+                # ustar threshold from change point detection
+                if not do_cpd_mchugh_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "cpd_mcnew":
+                # ustar threshold from change point detection
+                if not do_cpd_mcnew_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "mpt":
+                # ustar threshold from change point detection
+                if not do_mpt_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "l4":
+                # L4 processing
+                if not do_L4_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "l5":
+                # L5 processing
+                if not do_L5_batch(main_ui, cf_level):
+                    continue
+            elif level.lower() == "l6":
+                # L6 processing
+                if not do_L6_batch(main_ui, cf_level):
+                    continue
+            else:
+                msg = " Unrecognised batch processing level " + str(level)
+                logger.error(msg)

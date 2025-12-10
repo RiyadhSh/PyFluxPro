@@ -1,5 +1,30 @@
 version_name = "PyFluxPro"
-version_number = "V3.4.17"
+version_number = "V3.4.23"
+# V3.4.23 - October 2025
+#         - implemented batch_sites processing and editing of control file
+#         - removed pfp_log.debug_function_enter() and debug_function_leave()
+#         - added CO2Sig_IRGA and H2OSig_IRGA to pfp_ck.do_EC155check()
+#         - added variances to variable sanity check in pfp_ts.CoordRotation2D()
+#         - relocated pfp_gf.CheckGapLengths() in pfp_levels.l5qc()
+#         - cleaned up pfp_top_level.do_run_batch()
+#         - this version used for 2025_v2 processing
+# V3.4.22 - September 2025
+#         - add or remove global attributes from netCDF file open in GUI
+# V3.4.21 - June 2025
+#         - use datetime (not time) when creating output data structure when
+#           concatenating
+# V3.4.20 - May 2025
+#         - make sure Fco2 output for ONEFlux has not had the MAD filter applied
+# V3.4.19 - May 2025
+#         - implement MAD filter at L5
+#         - replace plt.draw()/pfp_utils.mypause() with fig.canvas.flush_events()
+#         - correct implementation of masking long gaps in GapFillUsingSOLO()
+#           and GapFillUsingMDS()
+#         - reinstate use of cftime to get Python real_datetime from netCDF time
+# V3.4.18 - June 2024
+#         - L4 gap filling
+#           - force final window to equal user specified window length by
+#             adjusting the window start date
 # V3.4.17 - February 2024
 #         - allow use of Fhv values for Fh at L3 if wA missing
 # V3.4.16 - November 2023

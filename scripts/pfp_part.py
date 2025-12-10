@@ -16,7 +16,8 @@ import pandas as pd
 
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 #------------------------------------------------------------------------------
 # Init
@@ -581,9 +582,7 @@ class partition(object):
         fig.savefig(file_name, format="png")
 
         if self.l6_info["Options"]["call_mode"] == "interactive":
-            plt.draw()
-            pfp_utils.mypause(0.5)
-            plt.ioff()
+            fig.canvas.flush_events()
         else:
             plt.close()
             plt.switch_backend(current_backend)
@@ -628,9 +627,7 @@ class partition(object):
         fig.savefig(file_name, format="png")
 
         if self.l6_info["Options"]["call_mode"] == "interactive":
-            plt.draw()
-            pfp_utils.mypause(0.5)
-            plt.ioff()
+            fig.canvas.flush_events()
         else:
             plt.close()
             plt.switch_backend(current_backend)

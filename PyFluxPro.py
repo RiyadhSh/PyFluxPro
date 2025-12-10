@@ -7,6 +7,9 @@ import sys
 import traceback
 import warnings
 import webbrowser
+now = datetime.datetime.now()
+log_file_base = "pfp_" + now.strftime("%Y%m%dT%H%M%S%f")
+os.environ["pfp_log"] = log_file_base
 # 3rd party modules
 from configobj import ConfigObj
 import netCDF4
@@ -38,11 +41,9 @@ for item in dir_list:
     if not os.path.exists(item):
         os.makedirs(item)
 
-now = datetime.datetime.now()
-logger_name = "pfp_log"
-log_file_name = "pfp_" + now.strftime("%Y%m%d%H%M") + ".log"
+log_file_name = log_file_base + ".log"
 log_file_name = os.path.join(logfiles_path, log_file_name)
-logger = pfp_log.CreateLogger(logger_name, log_file_name=log_file_name)
+logger = pfp_log.CreateLogger(log_file_base, log_file_name=log_file_name)
 
 class pfp_main_ui(QWidget):
     def __init__(self, pfp_version, textBox):
@@ -90,6 +91,8 @@ class pfp_main_ui(QWidget):
         self.actionFileConvertnc2biomet.setText("nc to Biomet")
         self.actionFileConvertnc2xls = QAction(self)
         self.actionFileConvertnc2xls.setText("nc to Excel")
+        self.actionFileConvertnc2oneflux = QAction(self)
+        self.actionFileConvertnc2oneflux.setText("nc to ONEFlux")
         self.actionFileConvertnc2reddyproc = QAction(self)
         self.actionFileConvertnc2reddyproc.setText("nc to REddyProc")
         # File menu item: split netCDF
@@ -157,6 +160,7 @@ class pfp_main_ui(QWidget):
         # File/Convert submenu
         self.menuFileConvert.addAction(self.actionFileConvertnc2xls)
         self.menuFileConvert.addAction(self.actionFileConvertnc2biomet)
+        self.menuFileConvert.addAction(self.actionFileConvertnc2oneflux)
         self.menuFileConvert.addAction(self.actionFileConvertnc2reddyproc)
         # File menu
         self.menuFile.addAction(self.actionFileOpen)
@@ -234,14 +238,19 @@ class pfp_main_ui(QWidget):
 
         # Connect signals to slots
         # File menu actions
-        self.actionFileConvertnc2biomet.triggered.connect(lambda:pfp_top_level.do_file_convert_nc2biomet(None, mode="standard"))
-        self.actionFileConvertnc2xls.triggered.connect(pfp_top_level.do_file_convert_nc2xls)
-        self.actionFileConvertnc2reddyproc.triggered.connect(lambda:pfp_top_level.do_file_convert_nc2reddyproc(None, mode="standard"))
+        arg = lambda: pfp_top_level.do_file_convert_nc2biomet(None, mode="standard")
+        self.actionFileConvertnc2biomet.triggered.connect(arg)
+        arg = lambda: pfp_top_level.do_file_convert_nc2oneflux(None, mode="standard")
+        self.actionFileConvertnc2oneflux.triggered.connect(arg)
+        arg = lambda: pfp_top_level.do_file_convert_nc2xls()
+        self.actionFileConvertnc2xls.triggered.connect(arg)
+        arg = lambda: pfp_top_level.do_file_convert_nc2reddyproc(None, mode="standard")
+        self.actionFileConvertnc2reddyproc.triggered.connect(arg)
         self.actionFileOpen.triggered.connect(self.file_open)
         self.actionFileSave.triggered.connect(self.file_save)
         self.actionFileSaveAs.triggered.connect(self.file_save_as)
         self.actionFileSplit.triggered.connect(pfp_top_level.do_file_split)
-        self.actionFileQuit.triggered.connect(QApplication.quit)
+        self.actionFileQuit.triggered.connect(self.application_quit)
         # Edit menu actions
         self.actionEditPreferences.triggered.connect(self.edit_preferences)
         # Run menu actions
@@ -270,6 +279,12 @@ class pfp_main_ui(QWidget):
         self.l4_ui = pfp_gui.pfp_l4_ui(self)
         # add the L5 GUI
         self.solo_gui = pfp_gui.solo_gui(self)
+
+    def application_quit(self):
+        # 20250629 PRI
+        # added to avoid "RuntimeError: wrapped C/C++ object of type ConsoleWindowLogHandler has been deleted"
+        # messages when File/Quit menu event occurs.
+        sys.exit()
 
     def file_open(self, file_uri=None):
         """
@@ -364,7 +379,7 @@ class pfp_main_ui(QWidget):
             # and save the control file
             self.file.write()
         # create a QtTreeView to edit the control file
-        if self.file["level"] in ["L1"]:
+        if self.file["level"].split("_")[0] in ["L1"]:
             # update control file to new syntax
             if not pfp_compliance.l1_update_controlfile(self.file): return
             # put the GUI for editing the L1 control file in a new tab
@@ -408,10 +423,14 @@ class pfp_main_ui(QWidget):
             self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_nc2csv_ecostress(self)
         elif self.file["level"] in ["nc2csv_fluxnet"]:
             self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_nc2csv_fluxnet(self)
+        elif self.file["level"] in ["nc2csv_oneflux"]:
+            self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_nc2csv_oneflux(self)
         elif self.file["level"] in ["nc2csv_reddyproc"]:
             self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_nc2csv_reddyproc(self)
-        elif self.file["level"] in ["batch"]:
+        elif self.file["level"] in ["batch", "batch_levels"]:
             self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_batch(self)
+        elif self.file["level"] in ["batch_sites"]:
+            self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_batch_sites(self)
         elif self.file["level"] in ["windrose"]:
             self.tabs.tab_dict[self.tabs.tab_index_all] = pfp_gui.edit_cfg_windrose(self)
         else:
@@ -766,9 +785,9 @@ class pfp_main_ui(QWidget):
         self.tabs.setCurrentIndex(0)
         # call the appropriate processing routine depending on the level
         self.tabs.tab_index_running = tab_index_current
-        if cfg["level"] == "batch":
+        if cfg["level"] in ["batch", "batch_levels", "batch_sites"]:
             # check the L1 control file to see if it is OK to run
-            if not pfp_compliance.check_batch_controlfile(cfg): return
+            #if not pfp_compliance.check_batch_controlfile(cfg): return
             # add stop to run menu
             self.menuRun.addAction(self.actionStopCurrent)
             self.actionStopCurrent.triggered.connect(self.stop_current)
@@ -778,7 +797,7 @@ class pfp_main_ui(QWidget):
             self.threadpool.start(worker)
             # no threading
             #pfp_top_level.do_run_batch(self)
-        elif cfg["level"] == "L1":
+        elif cfg["level"].split("_")[0] == "L1":
             # check the L1 control file to see if it is OK to run
             if pfp_compliance.check_l1_controlfile(cfg):
                 pfp_top_level.do_run_l1(cfg)
@@ -810,24 +829,28 @@ class pfp_main_ui(QWidget):
             pfp_top_level.do_run_l4(self)
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "L5":
-            if pfp_compliance.check_l5_controlfile(cfg):
-                pfp_top_level.do_run_l5(self)
+            if not pfp_compliance.check_l5_controlfile(cfg):
+                return
+            pfp_top_level.do_run_l5(self)
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "L6":
             if pfp_compliance.check_l6_controlfile(cfg):
                 pfp_top_level.do_run_l6(self)
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "nc2csv_biomet":
-            pfp_top_level.do_file_convert_nc2biomet(self, mode="custom")
+            pfp_top_level.do_file_convert_nc2biomet(cfg, mode="custom")
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "nc2csv_ecostress":
-            pfp_top_level.do_file_convert_nc2ecostress(self)
+            pfp_top_level.do_file_convert_nc2ecostress(cfg)
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "nc2csv_fluxnet":
-            pfp_top_level.do_file_convert_nc2fluxnet(self)
+            pfp_top_level.do_file_convert_nc2fluxnet(cfg)
+            self.actionRunCurrent.setDisabled(False)
+        elif cfg["level"] == "nc2csv_oneflux":
+            pfp_top_level.do_file_convert_nc2oneflux(cfg, mode="custom")
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "nc2csv_reddyproc":
-            pfp_top_level.do_file_convert_nc2reddyproc(self, mode="custom")
+            pfp_top_level.do_file_convert_nc2reddyproc(cfg, mode="custom")
             self.actionRunCurrent.setDisabled(False)
         elif cfg["level"] == "windrose":
             if pfp_compliance.check_windrose_controlfile(cfg):
@@ -845,6 +868,11 @@ class pfp_main_ui(QWidget):
             msg = "Processing will stop when this level is finished"
             result = pfp_gui.myMessageBox(msg)
         return
+    def closeEvent(self, event):
+        # 20250629 PRI
+        # added to avoid "RuntimeError: wrapped C/C++ object of type ConsoleWindowLogHandler has been deleted"
+        # messages when close window event occurs.
+        sys.exit()
     def closeTab (self, currentIndex):
         """ Close the selected tab."""
         # the tab close button ("x") shows on MacOS even though it is disabled
@@ -985,4 +1013,4 @@ if (__name__ == '__main__'):
     ui.show()
     #pfp_compliance.check_executables()
     app.exec_()
-    del ui
+    #del ui

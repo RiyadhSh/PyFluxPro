@@ -1,11 +1,13 @@
 # standard modules
 import logging
+import os
 # 3rd party
 import numpy
 # PFP modules
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 def Ws_from_Ux_Uy(ds, Ws_out, Ux_in, Uy_in):
     """
@@ -45,7 +47,7 @@ def Wd_from_Ux_Uy(ds, Wd_out, Ux_in, Uy_in):
     attr = {"long_name": "Wind direction", "units": "degrees",
             "statistic_type": "average"}
     Wd = pfp_utils.CreateEmptyVariable(Wd_out, nrecs, attr=attr)
-    if ((Ux["Attr"]["instrument"] in ["WindMaster-Pro"]) and
+    if ((Ux["Attr"]["instrument"] in ["WindMaster Pro"]) and
         (Uy["Attr"]["instrument"] == Ux["Attr"]["instrument"])):
         Wd_sonic = numpy.ma.mod(360 - numpy.degrees(numpy.ma.arctan2(Uy["Data"], Ux["Data"])), 360)
         Wd["Attr"]["instrument"] = Ux["Attr"]["instrument"]

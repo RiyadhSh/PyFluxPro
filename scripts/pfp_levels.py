@@ -1,6 +1,7 @@
 # standard modules
 import copy
 import logging
+import os
 # 3rd party modules
 import pandas
 # PFP modules
@@ -15,7 +16,8 @@ from scripts import pfp_rp
 from scripts import pfp_ts
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 def l1qc(cfg):
     """
@@ -143,9 +145,11 @@ def l3qc(cf, ds2):
         # approximate wT from virtual wT using wA (ref: Campbell OPECSystem manual)
         pfp_ts.FhvtoFh(cf, ds3)
         # correct the H2O & CO2 flux due to effects of flux on density measurements
-        if pfp_ts.Fe_WPL(cf, ds3):
+        pfp_ts.Fe_WPL(cf, ds3)
+        if ds3.info["returncodes"]["value"] != 0:
             return ds3
-        if pfp_ts.Fco2_WPL(cf, ds3):
+        pfp_ts.Fco2_WPL(cf, ds3)
+        if ds3.info["returncodes"]["value"] != 0:
             return ds3
     # **************************
     # *** CO2 and Fc section ***
@@ -153,7 +157,7 @@ def l3qc(cf, ds2):
     # convert CO2 units if required
     pfp_utils.ConvertCO2Units(cf, ds3)
     # calculate Fco2 storage term - single height only at present
-    pfp_ts.CalculateSco2SinglePoint(cf, ds3, l3_info)
+    pfp_ts.CalculateSco2SinglePoint(ds3)
     # convert Fco2 and Sco2 units if required
     pfp_utils.ConvertFco2Units(cf, ds3)
     # merge Fco2 and Sco2 series as required
@@ -284,13 +288,18 @@ def l5qc(main_gui, cf, ds4):
     pfp_io.TruncateDataStructure(ds5, l5_info)
     # check for missing data in the drivers
     pfp_gf.CheckL5Drivers(ds5, l5_info)
-    # now do the flux gap filling methods
-    # *** start of the section that does the gap filling of the fluxes ***
-    pfp_gf.CheckGapLengths(cf, ds5, l5_info)
     if ds5.info["returncodes"]["value"] != 0:
         return ds5
+    # apply any QC checks
+    pfp_ck.do_qcchecks(cf, ds5)
+    # now do the flux gap filling methods
+    # *** start of the section that does the gap filling of the fluxes ***
     # apply the turbulence filter (if requested)
     pfp_ck.ApplyTurbulenceFilter(cf, ds5, l5_info)
+    if ds5.info["returncodes"]["value"] != 0:
+        return ds5
+    # check for gaps longer than MaxShortGapDays
+    pfp_gf.CheckGapLengths(cf, ds5, l5_info)
     if ds5.info["returncodes"]["value"] != 0:
         return ds5
     # fill short gaps using interpolation

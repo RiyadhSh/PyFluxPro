@@ -16,7 +16,8 @@ from scripts import pfp_ck
 from scripts import pfp_io
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 # functions for GapFillUsingSOLO
 def GapFillUsingSOLO(main_gui, ds, l5_info, called_by):
@@ -38,7 +39,7 @@ def GapFillUsingSOLO(main_gui, ds, l5_info, called_by):
     l5_info[called_by]["info"]["enddate"] = ldt[-1].strftime("%Y-%m-%d %H:%M")
     # are we running in interactive or batch mode?
     if l5_info[called_by]["info"]["call_mode"].lower() == "interactive":
-        l5_info["GapFillUsingSOLO"]["gui"]["show_plots"] = True
+        l5_info[called_by]["gui"]["show_plots"] = True
         # put up a plot of the data coverage at L4
         gfSOLO_plotcoveragelines(ds, l5_info, called_by)
         # call the GapFillUsingSOLO GUI
@@ -132,8 +133,8 @@ def gfSOLO_autocomplete(ds, l5_info, called_by):
                 break
             si = max([0, si_gap])
             ei = min([len(ldt)-1, ei_gap])
-            l5s["run"]["startdate"] = ldt[si].strftime("%Y-%m-%d %H:%M")
-            l5s["run"]["enddate"] = ldt[ei].strftime("%Y-%m-%d %H:%M")
+            l5s["run"]["startdate"] = ldt[si]
+            l5s["run"]["enddate"] = ldt[ei]
             gfSOLO_main(ds, l5_info, called_by, outputs=[output])
             if l5s["info"]["call_mode"] == "interactive":
                 gfSOLO_plotcoveragelines(ds, l5_info, called_by)
@@ -146,8 +147,8 @@ def gfSOLO_autocomplete(ds, l5_info, called_by):
         # set min percebt to 10 %
         l5s["gui"]["min_percent"] = 10
         # set the start and end dates to the start and end of the data set
-        l5s["run"]["startdate"] = ldt[0].strftime("%Y-%m-%d %H:%M")
-        l5s["run"]["enddate"] = ldt[-1].strftime("%Y-%m-%d %H:%M")
+        l5s["run"]["startdate"] = ldt[0]
+        l5s["run"]["enddate"] = ldt[-1]
         # tell the user what we are about to do
         targets = [l5s["outputs"][output]["target"] for output in use_all_data]
         msg = " Attempting to gap fill " + ','.join(targets)
@@ -261,13 +262,16 @@ def gfSOLO_main(ds, l5_info, called_by, outputs=None):
     '''
     l5s = l5_info[called_by]
     ts = int(float(ds.root["Attributes"]["time_step"]))
-    startdate = l5s["run"]["startdate"]
-    enddate = l5s["run"]["enddate"]
+    startdate = l5s["run"]["startdate"].strftime("%Y-%m-%d %H:%M")
+    enddate = l5s["run"]["enddate"].strftime("%Y-%m-%d %H:%M")
+    middate = l5s["run"]["startdate"] + (l5s["run"]["enddate"] - l5s["run"]["startdate"]) / 2
+    middate = middate.strftime("%Y-%m-%d %H:%M")
     logger.info(" Gap filling using SOLO: " + startdate + " to " + enddate)
     # get some useful things
     ldt = ds.root["Variables"]["DateTime"]["Data"]
     # get the start and end datetime indices
     si = pfp_utils.GetDateIndex(ldt, startdate, ts=ts, default=0, match="exact")
+    mi = pfp_utils.GetDateIndex(ldt, middate, ts=ts, default=0, match="exact")
     ei = pfp_utils.GetDateIndex(ldt, enddate, ts=ts, default=len(ldt)-1, match="exact")
     # get the minimum number of points from the minimum percentage
     l5s["gui"]["min_points"] = int((ei-si)*l5s["gui"]["min_percent"]/100)
@@ -283,6 +287,7 @@ def gfSOLO_main(ds, l5_info, called_by, outputs=None):
         drivers = gfSOLO_check_drivers(ds, l5s["outputs"][output]["drivers"], si, ei)
         # get the start and end datetimes
         l5s["outputs"][output]["results"]["startdate"].append(ldt[si])
+        l5s["outputs"][output]["results"]["middate"].append(ldt[mi])
         l5s["outputs"][output]["results"]["enddate"].append(ldt[ei])
         # get the target data and check there is enough to continue
         var = pfp_utils.GetVariable(ds, target, start=si, end=ei)
@@ -292,7 +297,7 @@ def gfSOLO_main(ds, l5_info, called_by, outputs=None):
             logger.warning(msg)
             l5s["outputs"][output]["results"]["No. points"].append(float(0))
             results = list(l5s["outputs"][output]["results"].keys())
-            for item in ["startdate", "enddate", "No. points"]:
+            for item in ["startdate", "middate", "enddate", "No. points"]:
                 if item in results: results.remove(item)
             for item in results:
                 l5s["outputs"][output]["results"][item].append(float(c.missing_value))
@@ -334,6 +339,42 @@ def gfSOLO_main(ds, l5_info, called_by, outputs=None):
         pd = gfSOLO_initplot(len(drivers))
         gfSOLO_plot(pd, ds, drivers, target, output, l5s, si=si, ei=ei)
 
+def gfSOLO_mask_long_gaps(ds, solo_label, l5_info, called_by):
+    """
+    Purpose:
+     Mask gaps that are longer than a specified maximum length.
+    Usage:
+    Side effects:
+    Author: PRI
+    Date: May 2025
+    """
+    if not l5_info[called_by]["outputs"][solo_label]["mask long gaps"]:
+        # mask long gaps disabled in control file
+        return
+    if (("MaxShortGapRecords" not in l5_info[called_by]["info"]) or
+        ("MaxShortGapDays" not in l5_info[called_by]["info"])):
+        # required info missing
+        return
+    max_short_gap_days = int(l5_info[called_by]["info"]["MaxShortGapDays"])
+    msg = "  Masking gaps longer than " + str(max_short_gap_days) + " days "
+    msg += "in variable " + solo_label
+    logger.info(msg)
+    target_label = l5_info[called_by]["outputs"][solo_label]["target"]
+    target = pfp_utils.GetVariable(ds, target_label)
+    variable = pfp_utils.GetVariable(ds, solo_label)
+    mask = numpy.ma.getmaskarray(target["Data"])
+    # start and stop indices of contiguous blocks
+    max_short_gap_records = int(l5_info[called_by]["info"]["MaxShortGapRecords"])
+    gap_start_end = pfp_utils.contiguous_regions(mask)
+    for start, stop in gap_start_end:
+        gap_length = stop - start
+        if gap_length > max_short_gap_records:
+            variable["Data"][start: stop] = target["Data"][start: stop]
+            variable["Flag"][start: stop] = target["Flag"][start: stop]
+    # put data_int back into the data structure
+    pfp_utils.CreateVariable(ds, variable)
+    return
+
 def gfSOLO_plot(pd, ds, drivers, target, output, l5s, si=0, ei=-1):
     """ Plot the results of the SOLO run. """
     # get the time step
@@ -363,7 +404,8 @@ def gfSOLO_plot(pd, ds, drivers, target, output, l5s, si=0, ei=-1):
     rect1 = [0.10, pd["margin_bottom"], pd["xy_width"], pd["xy_height"]]
     ax1 = plt.axes(rect1)
     # get the diurnal stats of the observations
-    mask = numpy.ma.mask_or(obs["Data"].mask, mod["Data"].mask)
+    mask = numpy.ma.mask_or(numpy.ma.getmaskarray(obs["Data"]),
+                            numpy.ma.getmaskarray(mod["Data"]))
     obs_mor = numpy.ma.array(obs["Data"], mask=mask, copy=True)
     _, Hr1, Av1, _, _, _ = gf_getdiurnalstats(Hdh, obs_mor, ts)
     ax1.plot(Hr1, Av1, 'b-', label="Obs")
@@ -473,15 +515,13 @@ def gfSOLO_plot(pd, ds, drivers, target, output, l5s, si=0, ei=-1):
     # save a hard copy of the plot
     sdt = xdt[0].strftime("%Y%m%d")
     edt = xdt[-1].strftime("%Y%m%d")
-    figname = l5s["info"]["site_name"].replace(" ", "") + target
+    figname = l5s["info"]["site_name"].replace(" ", "") + "_" + target
     figname = figname + "_" + sdt + "_" + edt + ".png"
     figname = os.path.join(l5s["info"]["plot_path"], figname)
     fig.savefig(figname, format="png")
     # draw the plot on the screen
     if l5s["gui"]["show_plots"]:
-        plt.draw()
-        pfp_utils.mypause(0.5)
-        plt.ioff()
+        fig.canvas.flush_events()
     else:
         plt.close()
         plt.switch_backend(current_backend)
@@ -549,9 +589,7 @@ def gfSOLO_plotcoveragelines(ds, l5_info, called_by):
     ax2.set_yticklabels(ylabel_right_list)
     fig.tight_layout()
     if l5s["gui"]["show_plots"]:
-        plt.draw()
-        pfp_utils.mypause(0.5)
-        plt.ioff()
+        fig.canvas.flush_events()
     else:
         plt.switch_backend(current_backend)
         plt.ion()
@@ -609,12 +647,10 @@ def gfSOLO_plotsummary(ds, solo):
         # and loop over rows in plot
         for row, rlabel, ylabel in zip(list(range(len(result_list))), result_list, ylabel_list):
             # get the results to be plotted
-            # put the data into the right order to be plotted
-            dt, data = gfSOLO_plotsummary_getdata(dt_start, dt_end, solo["outputs"][label]["results"][rlabel])
-            dt = numpy.ma.masked_equal(dt, float(c.missing_value))
-            data = numpy.ma.masked_equal(data, float(c.missing_value))
-            # plot the results
-            axs[row, col].plot(dt, data)
+            x = numpy.ma.masked_values(solo["outputs"][label]["results"]["middate"], c.missing_value)
+            y = numpy.ma.masked_values(solo["outputs"][label]["results"][rlabel], c.missing_value)
+            idx = numpy.ma.argsort(x)
+            axs[row, col].plot(x[idx], y[idx], marker='o', color='blue')
             # put in the major ticks
             axs[row, col].xaxis.set_major_locator(MTLoc)
             # if this is the left-most column, add the Y axis labels
@@ -636,9 +672,7 @@ def gfSOLO_plotsummary(ds, solo):
     figname = figname + "_" + sdt + "_" + edt + ".png"
     fig.savefig(figname, format="png")
     if solo["gui"]["show_plots"]:
-        plt.draw()
-        pfp_utils.mypause(0.5)
-        plt.ioff()
+        fig.canvas.flush_events()
     else:
         plt.close()
         plt.switch_backend(current_backend)
@@ -725,11 +759,13 @@ def gfSOLO_run_interactive(solo_gui):
     l5s["gui"]["iterations"] = str(solo_gui.lineEdit_Iterations.text())
     # get the start and end datetimes entered in the SOLO GUI
     if len(str(solo_gui.lineEdit_StartDate.text())) != 0:
-        l5s["gui"]["startdate"] = str(solo_gui.lineEdit_StartDate.text())
+        startdate = str(solo_gui.lineEdit_StartDate.text())
+        l5s["gui"]["startdate"] = dateutil.parser.parse(startdate)
     else:
         l5s["gui"]["startdate"] = l5s["info"]["startdate"]
     if len(str(solo_gui.lineEdit_EndDate.text())) != 0:
-        l5s["gui"]["enddate"] = str(solo_gui.lineEdit_EndDate.text())
+        enddate = str(solo_gui.lineEdit_EndDate.text())
+        l5s["gui"]["enddate"] = dateutil.parser.parse(enddate)
     else:
         l5s["gui"]["enddate"] = l5s["info"]["enddate"]
     # now do the work
@@ -745,6 +781,9 @@ def gfSOLO_run(ds, l5_info, called_by):
     Author: PRI
     Date: Re-written in August 2019
     """
+    ts = int(ds.root["Attributes"]["time_step"])
+    file_start_date = ds.root["Variables"]["DateTime"]["Data"][0]
+    file_end_date = ds.root["Variables"]["DateTime"]["Data"][-1]
     l5s = l5_info[called_by]
     # get a list of target variables
     targets = [l5s["outputs"][output]["target"] for output in list(l5s["outputs"].keys())]
@@ -766,20 +805,27 @@ def gfSOLO_run(ds, l5_info, called_by):
     elif l5s["gui"]["period_option"] == 2:
         # automated run with window length in months
         logger.info(" Starting auto (months) run ...")
-        startdate = dateutil.parser.parse(l5s["run"]["startdate"])
-        enddate = startdate + dateutil.relativedelta.relativedelta(months=l5s["gui"]["number_months"])
-        enddate = min([dateutil.parser.parse(l5s["info"]["enddate"]), enddate])
-        l5s["run"]["enddate"] = enddate.strftime("%Y-%m-%d %H:%M")
-        while startdate < enddate:
+        months = int(l5s["gui"]["number_months"])
+        window_delta = dateutil.relativedelta.relativedelta(months=months)
+        time_step_delta = dateutil.relativedelta.relativedelta(minutes=ts)
+        run_start_date = file_start_date
+        while run_start_date < file_end_date:
+            run_end_date = run_start_date + window_delta - time_step_delta
+            run_end_date = min([run_end_date, file_end_date])
+            run_window_delta = ((run_end_date.year - run_start_date.year) * 12 +
+                                 run_end_date.month - run_start_date.month)
+            if run_window_delta == window_delta:
+                l5s["run"]["startdate"] = run_start_date
+                l5s["run"]["enddate"] = run_end_date
+            else:
+                tmp_start_date = run_end_date - window_delta + time_step_delta
+                l5s["run"]["startdate"] = max([tmp_start_date, file_start_date])
+                l5s["run"]["enddate"] = run_end_date
             gfSOLO_main(ds, l5_info, called_by)
             if (l5s["info"]["called_by"] in ["GapFillUsingSOLO", "GapFillLongSOLO"] and
                 l5s["info"]["call_mode"] == "interactive"):
                 gfSOLO_plotcoveragelines(ds, l5_info, called_by)
-            startdate = enddate
-            l5s["run"]["startdate"] = startdate.strftime("%Y-%m-%d %H:%M")
-            enddate = startdate + dateutil.relativedelta.relativedelta(months=l5s["gui"]["number_months"])
-            enddate = min([dateutil.parser.parse(l5s["info"]["enddate"]), enddate])
-            l5s["run"]["enddate"] = enddate.strftime("%Y-%m-%d %H:%M")
+            run_start_date = run_end_date + time_step_delta
         # now fill any remaining gaps
         gfSOLO_autocomplete(ds, l5_info, called_by)
         if l5s["info"]["called_by"] in ["GapFillUsingSOLO", "GapFillLongSOLO"]:
@@ -792,32 +838,50 @@ def gfSOLO_run(ds, l5_info, called_by):
     elif l5s["gui"]["period_option"] == 3:
         # automated run with window length in days
         logger.info(" Starting auto (days) run ...")
-        # get the start datetime entered in the SOLO GUI
-        startdate = dateutil.parser.parse(l5s["run"]["startdate"])
-        # get the end datetime from the start datetime
-        enddate = startdate + dateutil.relativedelta.relativedelta(days=l5s["gui"]["number_days"])
-        # clip end datetime to last datetime in tower file
-        enddate = min([dateutil.parser.parse(l5s["info"]["enddate"]), enddate])
-        l5s["run"]["enddate"] = enddate.strftime("%Y-%m-%d %H:%M")
-        while startdate < enddate:
+        days = int(l5s["gui"]["number_days"])
+        window_delta = dateutil.relativedelta.relativedelta(days=days)
+        time_step_delta = dateutil.relativedelta.relativedelta(minutes=ts)
+        run_start_date = file_start_date
+        while run_start_date < file_end_date:
+            run_end_date = run_start_date + window_delta - time_step_delta
+            run_end_date = min([run_end_date, file_end_date])
+            run_window_delta = (run_end_date - run_start_date).days
+            if run_window_delta == window_delta:
+                l5s["run"]["startdate"] = run_start_date
+                l5s["run"]["enddate"] = run_end_date
+            else:
+                tmp_start_date = run_end_date - window_delta + time_step_delta
+                l5s["run"]["startdate"] = max([tmp_start_date, file_start_date])
+                l5s["run"]["enddate"] = run_end_date
             gfSOLO_main(ds, l5_info, called_by)
             if (l5s["info"]["called_by"] in ["GapFillUsingSOLO", "GapFillLongSOLO"] and
                 l5s["info"]["call_mode"] == "interactive"):
                 gfSOLO_plotcoveragelines(ds, l5_info, called_by)
-            startdate = enddate
-            l5s["run"]["startdate"] = startdate.strftime("%Y-%m-%d %H:%M")
-            enddate = startdate + dateutil.relativedelta.relativedelta(days=l5s["gui"]["number_days"])
-            enddate = min([dateutil.parser.parse(l5s["info"]["enddate"]), enddate])
-            l5s["run"]["enddate"] = enddate.strftime("%Y-%m-%d %H:%M")
+            run_start_date = run_end_date + time_step_delta
         # now fill any remaining gaps
         gfSOLO_autocomplete(ds, l5_info, called_by)
         if l5s["info"]["called_by"] in ["GapFillUsingSOLO", "GapFillLongSOLO"]:
             # write Excel spreadsheet with fit statistics
-            pfp_io.xl_write_SOLOStats(ds, l5s)
+            #pfp_io.xl_write_SOLOStats(ds, l5s)
             if l5s["info"]["call_mode"] == "interactive":
                 # plot the summary statistics
                 gfSOLO_plotsummary(ds, l5s)
-        logger.info(" Finished auto (days) run ...")
+        msg = " Finished auto (months) run ..."
+        logger.info(msg)
+    else:
+        msg = " " + called_by + ": unrecognised period option"
+        logger.error(msg)
+        return
+    # check to see if we should mask long gaps
+    # this is only done for GapFillUsingSOLO, not done for GapFillLongSOLO
+    if called_by in ["GapFillUsingSOLO"]:
+        # we are doing GapFillUsingSOLO, get a list of output labels
+        outputs = list(l5s["outputs"].keys())
+        # loop over the outputs ...
+        for output in outputs:
+            # ... and mask long gaps
+            gfSOLO_mask_long_gaps(ds, output, l5_info, called_by)
+    return
 
 def gfSOLO_runseqsolo(dsb, drivers, targetlabel, outputlabel, nRecs,
                       solo, flag_code, si=0, ei=-1):
@@ -914,16 +978,12 @@ def gfSOLO_runsofm(dsb, drivers, targetlabel, nRecs, solo, si=0, ei=-1):
         driver["Data"] = numpy.ma.filled(driver["Data"], c.missing_value)
         index = numpy.where(abs(driver["Data"]-c.missing_value)<c.eps)[0]
         if len(index) != 0:
-            msg = " GapFillUsingSOLO: missing value found in driver " + label + " at lines " + str(index)
+            msg = " GapFillUsingSOLO: " + str(len(index)) + " missing values found in driver " + label
             logger.error(msg)
             badlines = badlines + index.tolist()
             for n in index:
                 baddates.append(dsb.root["Variables"]["DateTime"]["Data"][n])
                 badvalues.append(dsb.root["Variables"][label]["Data"][n])
-            msg = " GapFillUsingSOLO: driver values: " + str(badvalues)
-            logger.error(msg)
-            msg = " GapFillUsingSOLO: datetimes: " + str(baddates)
-            logger.error(msg)
         sofminputdata[:, i] = driver["Data"][:]
         i = i + 1
     if len(badlines) != 0:
@@ -931,7 +991,7 @@ def gfSOLO_runsofm(dsb, drivers, targetlabel, nRecs, solo, si=0, ei=-1):
         goodlines = [x for x in range(0, nRecs) if x not in badlines]
         sofminputdata = sofminputdata[goodlines, :]
         msg = " GapFillUsingSOLO: removed " + str(nBad) + " lines from sofm input file"
-        logger.info(msg)
+        logger.error(msg)
         nRecs = len(goodlines)
     # now write the drivers to the SOFM input file
     sofm_input = os.path.join(td, "input", "sofm_input.csv")

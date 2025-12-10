@@ -14,11 +14,11 @@ from scripts import pfp_func_stats
 from scripts import pfp_func_transforms
 from scripts import pfp_gfALT
 from scripts import pfp_gfSOLO
-from scripts import pfp_io
 from scripts import pfp_plot
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 class myMessageBox(QtWidgets.QMessageBox):
     def __init__(self, msg, title="Information", parent=None):
@@ -273,6 +273,43 @@ class file_explore(QtWidgets.QWidget):
                 idx = self.model.index(row, 0)
                 self.view.expand(idx)
 
+    def add_global(self):
+        """ Add a new entry to the [Global] section."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the new children
+        child0 = QtGui.QStandardItem("New item")
+        child1 = QtGui.QStandardItem("")
+        selected_item.appendRow([child0, child1])
+        # update the tab text with an asterix if required
+        self.update_tab_text()
+
+    def add_global_above(self):
+        """ Add a new variable above the selected variable."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the parent of the selected item
+        parent = selected_item.parent()
+        
+        ## construct the new variable dictionary
+        #new_var = {"xl":{"sheet":"", "name":""},
+                   #"Attr":{"height": "", "instrument": "", "long_name": "",
+                           #"statistic_type": "average", "standard_name": "",
+                           #"units": ""}}
+        #subsection = QtGui.QStandardItem("New variable")
+        #self.add_subsubsection(subsection, new_var)
+        
+        # get the new children
+        child0 = QtGui.QStandardItem("New item")
+        child1 = QtGui.QStandardItem("")        
+        parent.insertRow(idx.row(), [child0, child1])
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        self.update_tab_text()
+
     def double_click(self):
         """ Save the selected text on double click events."""
         idx = self.view.selectedIndexes()
@@ -286,60 +323,85 @@ class file_explore(QtWidgets.QWidget):
             return
         # get the indices of selected items
         idx = self.view.selectedIndexes()
-        # get the group labels of selected items
-        groups = list(set([i.parent().data() for i in idx]))
-        # dictionary to hold the labels of selected variables for each group
-        selections = {}
-        # add the selected variable labels to the right group in selections
-        for i in idx:
-            # get the group label of this selected item
-            group = i.parent().data()
-            # skip anything selected in 'Global attributes'
-            if (group in ["Global attributes"]):
-                continue
-            # add the group to selections if not there
-            if group not in selections:
-                selections[group] = []
-            # append the label of the selected variable to the group
-            selections[i.parent().data()].append(i.data())
-        # rename the 'Variables' group to 'root'
-        for key in list(selections.keys()):
-            if key is None or key == "Variables":
-                selections["root"] = selections.pop(key)
-                break
-        # return if selections is empty (no variables selected)
-        if len(list(selections.keys())) == 0:
-            return
-        # plot time series, separate axes or grouped
-        menuPlotTimeSeries = QtWidgets.QMenu(self)
-        menuPlotTimeSeries.setTitle("Plot time series")
-        actionPlotTimeSeriesSeparate = QtWidgets.QAction(self)
-        actionPlotTimeSeriesSeparate.setText("Separate")
-        actionPlotTimeSeriesSeparate.triggered.connect(lambda: self.plot_timeseries(selections))
-        actionPlotTimeSeriesGrouped = QtWidgets.QAction(self)
-        actionPlotTimeSeriesGrouped.setText("Grouped")
-        actionPlotTimeSeriesGrouped.triggered.connect(lambda: self.plot_timeseries_grouped(selections))
-        menuPlotTimeSeries.addAction(actionPlotTimeSeriesSeparate)
-        menuPlotTimeSeries.addAction(actionPlotTimeSeriesGrouped)
-        self.context_menu.addMenu(menuPlotTimeSeries)
-        # plot time series of percentiles
-        self.context_menu.actionPlotPercentiles = QtWidgets.QAction(self)
-        self.context_menu.actionPlotPercentiles.setText("Plot percentiles")
-        self.context_menu.addAction(self.context_menu.actionPlotPercentiles)
-        self.context_menu.actionPlotPercentiles.triggered.connect(lambda: self.plot_percentiles(selections))
-        # plot fingerprints
-        # check the time steps for all groups containing selected variables
-        groups = list(selections.keys())
-        groups = ["root" if i == "Global attributes" else i for i in groups]
-        time_steps = []
-        for group in groups:
-            time_steps.append(str(getattr(self.ds, group)["Attributes"]["time_step"]))
-        # all time steps for selected variables must be 30 or 60 to plot fingerprints
-        if all([True if ts in ["30", "60"] else False for ts in time_steps]):
-            self.context_menu.actionPlotFingerprints = QtWidgets.QAction(self)
-            self.context_menu.actionPlotFingerprints.setText("Plot fingerprints")
-            self.context_menu.addAction(self.context_menu.actionPlotFingerprints)
-            self.context_menu.actionPlotFingerprints.triggered.connect(lambda: self.plot_fingerprints(selections))
+        if len(idx) == 1 and idx[0].data() == "Global attributes":
+            # context menu to add global attribute
+            self.context_menu.actionAddGlobal = QtWidgets.QAction(self)
+            self.context_menu.actionAddGlobal.setText("Add attribute")
+            self.context_menu.addAction(self.context_menu.actionAddGlobal)
+            self.context_menu.actionAddGlobal.triggered.connect(self.add_global)
+        elif len(idx) == 1 and idx[0].parent().data() == "Global attributes":
+            selected_text = idx[0].data()
+            # context menu to add global attribute above selected item
+            self.context_menu.actionAddGlobalAbove = QtWidgets.QAction(self)
+            self.context_menu.actionAddGlobalAbove.setText("Add attribute")
+            self.context_menu.addAction(self.context_menu.actionAddGlobalAbove)
+            self.context_menu.actionAddGlobalAbove.triggered.connect(self.add_global_above)
+            if selected_text not in ["canopy_height", "featureType", "fluxnet_id",
+                                     "irga_type", "license_name", 
+                                     "latitude", "longitude",
+                                     "processing_level",
+                                     "site_name", "sonic_type", 
+                                     "time_step", "time_zone",
+                                     "time_coverage_end", "time_coverage_start"]:
+                self.context_menu.actionRemoveGlobal = QtWidgets.QAction(self)
+                self.context_menu.actionRemoveGlobal.setText("Remove attribute")
+                self.context_menu.addAction(self.context_menu.actionRemoveGlobal)
+                self.context_menu.actionRemoveGlobal.triggered.connect(self.remove_item)
+        else:
+            # get the group labels of selected items
+            groups = list(set([i.parent().data() for i in idx]))
+            # dictionary to hold the labels of selected variables for each group
+            selections = {}
+            # add the selected variable labels to the right group in selections
+            for i in idx:
+                # get the group label of this selected item
+                group = i.parent().data()
+                # skip anything selected in 'Global attributes'
+                if (group in ["Global attributes"]):
+                    continue
+                # add the group to selections if not there
+                if group not in selections:
+                    selections[group] = []
+                # append the label of the selected variable to the group
+                selections[i.parent().data()].append(i.data())
+            # rename the 'Variables' group to 'root'
+            for key in list(selections.keys()):
+                if key is None or key == "Variables":
+                    selections["root"] = selections.pop(key)
+                    break
+            # return if selections is empty (no variables selected)
+            if len(list(selections.keys())) == 0:
+                return
+            # plot time series, separate axes or grouped
+            menuPlotTimeSeries = QtWidgets.QMenu(self)
+            menuPlotTimeSeries.setTitle("Plot time series")
+            actionPlotTimeSeriesSeparate = QtWidgets.QAction(self)
+            actionPlotTimeSeriesSeparate.setText("Separate")
+            actionPlotTimeSeriesSeparate.triggered.connect(lambda: self.plot_timeseries(selections))
+            actionPlotTimeSeriesGrouped = QtWidgets.QAction(self)
+            actionPlotTimeSeriesGrouped.setText("Grouped")
+            actionPlotTimeSeriesGrouped.triggered.connect(lambda: self.plot_timeseries_grouped(selections))
+            menuPlotTimeSeries.addAction(actionPlotTimeSeriesSeparate)
+            menuPlotTimeSeries.addAction(actionPlotTimeSeriesGrouped)
+            self.context_menu.addMenu(menuPlotTimeSeries)
+            # plot time series of percentiles
+            self.context_menu.actionPlotPercentiles = QtWidgets.QAction(self)
+            self.context_menu.actionPlotPercentiles.setText("Plot percentiles")
+            self.context_menu.addAction(self.context_menu.actionPlotPercentiles)
+            self.context_menu.actionPlotPercentiles.triggered.connect(lambda: self.plot_percentiles(selections))
+            # plot fingerprints
+            # check the time steps for all groups containing selected variables
+            groups = list(selections.keys())
+            groups = ["root" if i == "Global attributes" else i for i in groups]
+            time_steps = []
+            for group in groups:
+                time_steps.append(str(getattr(self.ds, group)["Attributes"]["time_step"]))
+            # all time steps for selected variables must be 30 or 60 to plot fingerprints
+            if all([True if ts in ["30", "60"] else False for ts in time_steps]):
+                self.context_menu.actionPlotFingerprints = QtWidgets.QAction(self)
+                self.context_menu.actionPlotFingerprints.setText("Plot fingerprints")
+                self.context_menu.addAction(self.context_menu.actionPlotFingerprints)
+                self.context_menu.actionPlotFingerprints.triggered.connect(lambda: self.plot_fingerprints(selections))
 
         self.context_menu.exec_(self.view.viewport().mapToGlobal(position))
 
@@ -610,6 +672,18 @@ class file_explore(QtWidgets.QWidget):
             logger.error(error_message)
         return
 
+    def remove_item(self):
+        """ Remove an item from the view."""
+        # loop over selected items in the tree
+        for idx in self.view.selectedIndexes():
+            # get the selected item from the index
+            selected_item = idx.model().itemFromIndex(idx)
+            # get the parent of the selected item
+            parent = selected_item.parent()
+            # remove the row
+            parent.removeRow(selected_item.row())
+        self.update_tab_text()
+
     def update_tab_text(self):
         """ Add an asterisk to the tab title text to indicate tab contents have changed."""
         # add an asterisk to the tab text to indicate the tab contents have changed
@@ -625,6 +699,7 @@ class edit_cfg_batch(QtWidgets.QWidget):
         self.main_gui = main_gui
         self.tabs = main_gui.tabs
         self.implemented_levels = ["L1", "L2", "L3",
+                                   "nc2csv_oneflux",
                                    "concatenate", "climatology",
                                    "cpd_barr", "cpd_mchugh", "cpd_mcnew", "mpt",
                                    "L4", "L5", "L6"]
@@ -738,12 +813,6 @@ class edit_cfg_batch(QtWidgets.QWidget):
                         add_separator = True
         elif level == 1:
             parent = selected_item.parent()
-            #if (str(parent.text()) == "Options") and (selected_item.column() == 0):
-                #self.context_menu.actionRemoveOption = QtWidgets.QAction(self)
-                #self.context_menu.actionRemoveOption.setText("Remove option")
-                #self.context_menu.addAction(self.context_menu.actionRemoveOption)
-                #self.context_menu.actionRemoveOption.triggered.connect(self.remove_item)
-            #elif str(parent.text()) == "Files":
             if str(parent.text()) == "Levels":
                 if selected_text in self.implemented_levels:
                     self.context_menu.actionAddControlFile = QtWidgets.QAction(self)
@@ -761,7 +830,6 @@ class edit_cfg_batch(QtWidgets.QWidget):
         elif level == 2:
             parent = selected_item.parent()
             section = selected_item.parent().parent()
-            #if ((str(section.text()) == "Files") and (str(parent.text()) == "In")):
             if (str(section.text()) == "Levels"):
                 if (selected_item.column() == 0):
                     self.context_menu.actionAddControlFileAbove = QtWidgets.QAction(self)
@@ -919,6 +987,410 @@ class edit_cfg_batch(QtWidgets.QWidget):
                     self.sections[key1].appendRow([child0, child1])
                 self.model.appendRow(self.sections[key1])
             elif key1 in ["Levels"]:
+                # sections with 2 levels
+                self.sections[key1] = QtGui.QStandardItem(key1)
+                self.sections[key1].setEditable(False)
+                for key2 in self.cfg[key1]:
+                    parent2 = QtGui.QStandardItem(key2)
+                    parent2.setEditable(False)
+                    for val in self.cfg[key1][key2]:
+                        value = self.cfg[key1][key2][val]
+                        child0 = QtGui.QStandardItem(val)
+                        child0.setEditable(False)
+                        child1 = QtGui.QStandardItem(str(value))
+                        parent2.appendRow([child0, child1])
+                    self.sections[key1].appendRow(parent2)
+                self.model.appendRow(self.sections[key1])
+
+    def get_sibling_names(self):
+        idx = self.view.selectedIndexes()[0]
+        parent = idx.parent().model().itemFromIndex(idx.parent())
+        sibling_names = []
+        if parent.hasChildren():
+            for i in range(parent.rowCount()):
+                sibling_names.append(str(parent.child(i, 0).text()))
+        return sibling_names
+
+    def handleItemChanged(self, item):
+        """ Handler for when view items are edited."""
+        # here we trap attempts by the user to add duplicate entries
+        # index of selected item
+        idx = self.view.selectedIndexes()[0]
+        # selected item from index
+        selected_item = idx.model().itemFromIndex(idx)
+        # text of selected item, this will be the name of the item the user
+        # is trying to add
+        selected_text = selected_item.text()
+        # parent of the item the user is trying to add
+        parent = selected_item.parent()
+        # user has done something silly
+        if not hasattr(parent, "text"):
+            return
+        # check parent text to see if this item needs to be checked for duplicates
+        if parent.text() in ["Options", "Levels"]:
+            # get the names of the new item's siblings
+            sibling_names = self.get_sibling_names()
+            # if the user is trying to use the same name as an existing entry there
+            # will be entries with this name in the siblings name list
+            if len(list(set(sibling_names))) != len(sibling_names):
+                # duplicate entries found
+                msg = "'" + selected_text + "' already exists in " + parent.text() + " section"
+                # put up a message box to tell the user
+                MsgBox_Continue(msg)
+                # change the item name back to the original
+                selected_item.setText(self.double_click_selected_text)
+                return
+        # update the control file contents
+        self.cfg = self.get_data_from_model()
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        self.update_tab_text()
+
+    def remove_cfg_file(self):
+        """ Remove a control file from the level section."""
+        # remove the item
+        self.remove_item()
+        # index of selected item
+        idx = self.view.selectedIndexes()[0]
+        # item from index
+        selected_item = idx.model().itemFromIndex(idx)
+        # parent of selected item
+        parent = selected_item.parent()
+        # renumber the subsections
+        for i in range(parent.rowCount()):
+            parent.child(i, 0).setText(str(i))
+
+    def remove_item(self):
+        """ Remove an item from the view."""
+        # loop over selected items in the tree
+        for idx in self.view.selectedIndexes():
+            # get the selected item from the index
+            selected_item = idx.model().itemFromIndex(idx)
+            # get the parent of the selected item
+            parent = selected_item.parent()
+            # remove the row
+            parent.removeRow(selected_item.row())
+        self.update_tab_text()
+
+    def renumber_subsection_keys(self, subsection):
+        """ Renumber the subsection keys when an item is removed."""
+        for i in range(subsection.rowCount()):
+            child = subsection.child(i)
+            child.setText(str(i))
+        return
+
+    def update_tab_text(self):
+        """ Add an asterisk to the tab title text to indicate tab contents have changed."""
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        tab_text = str(self.tabs.tabText(self.tabs.tab_index_current))
+        if "*" not in tab_text:
+            self.tabs.setTabText(self.tabs.tab_index_current, tab_text+"*")
+
+class edit_cfg_batch_sites(QtWidgets.QWidget):
+    def __init__(self, main_gui):
+        super(edit_cfg_batch_sites, self).__init__()
+        self.cfg = copy.deepcopy(main_gui.file)
+        self.main_gui = main_gui
+        self.tabs = main_gui.tabs
+        self.implemented_levels = ["L1", "L2", "L3",
+                                   "nc2csv_oneflux",
+                                   "concatenate", "climatology",
+                                   "cpd_barr", "cpd_mchugh", "cpd_mcnew", "mpt",
+                                   "L4", "L5", "L6"]
+        self.edit_batch_gui()
+
+    def add_control_file(self):
+        """ Add an entry for a new input file."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        subsection = idx.model().itemFromIndex(idx)
+        dict_to_add = {str(subsection.rowCount()): "Right click to browse"}
+        # add the subsubsection
+        self.add_subsection(subsection, dict_to_add)
+
+    def add_control_file_above(self):
+        """ Add a new control file above the selected entry."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        new_file_number = min([0, int(float(selected_item.text()))-1])
+        # get the parent of the selected item
+        parent = selected_item.parent()
+        # insert the new file entry
+        new_file_entry = [QtGui.QStandardItem(str(new_file_number)),
+                          QtGui.QStandardItem("Right click to browse")]
+        parent.insertRow(idx.row(), new_file_entry)
+        # renumber the section
+        self.renumber_subsection_keys(parent)
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        self.update_tab_text()
+        return
+
+    def add_site(self):
+        """ Add a site to be processed."""
+        idx = self.view.selectedIndexes()[0]
+        selected_item = idx.model().itemFromIndex(idx)
+        dict_to_add = {"<site_name>": {"0": "Right click to browse"}}
+        # add the subsubsection
+        self.add_subsubsection(selected_item, dict_to_add)
+        # update the tab text with an asterix if required
+        self.update_tab_text()
+
+    def add_site_above(self):
+        """ Add a new site above the selected entry."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the parent of the selected item
+        parent = selected_item.parent()
+        # insert the new site entry
+        new_site_entry = QtGui.QStandardItem("<site_name>")
+        new_site_entry.appendRow([QtGui.QStandardItem("0"),
+                                 QtGui.QStandardItem("Right click to browse")])
+        parent.insertRow(idx.row(), new_site_entry)
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        self.update_tab_text()
+        return
+
+    def add_subsection(self, section, dict_to_add):
+        """ Add a subsection to the model."""
+        for key in dict_to_add:
+            val = str(dict_to_add[key])
+            child0 = QtGui.QStandardItem(key)
+            child0.setEditable(False)
+            child1 = QtGui.QStandardItem(val)
+            section.appendRow([child0, child1])
+
+    def add_subsubsection(self, subsection, dict_to_add):
+        """ Add a subsubsection to the model."""
+        for key in dict_to_add:
+            subsubsection = QtGui.QStandardItem(key)
+            #subsubsection.setEditable(False)
+            self.add_subsection(subsubsection, dict_to_add[key])
+            subsection.appendRow(subsubsection)
+
+    def browse_input_file(self):
+        """ Browse for the input data file path."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the parent of the selected item
+        parent = selected_item.parent()
+        # get the file_path so it can be used as a default directory
+        key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
+        # dialog for open file
+        new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
+                                                              directory=file_path)[0]
+        # update the model
+        if len(str(new_file_path)) > 0:
+            new_file_path = QtCore.QDir.toNativeSeparators(str(new_file_path))
+            parent.child(selected_item.row(), 1).setText(new_file_path)
+
+    def context_menu(self, position):
+        """ Right click context menu."""
+        # get a menu
+        self.context_menu = QtWidgets.QMenu()
+        # get the index of the selected item
+        if len(self.view.selectedIndexes()) == 0:
+            # trap right click when nothing is selected
+            return
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item text
+        selected_text = str(idx.data())
+        # get the selected item
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the level of the selected item
+        level = self.get_level_selected_item()
+        if level == 0:
+            #existing_entries = self.get_existing_entries()
+            # sections with only 1 level
+            if selected_text == "Options":
+                pass
+            elif selected_text == "Sites":
+                site_text = "Add site"
+                self.context_menu.actionAddSite = QtWidgets.QAction(self)
+                self.context_menu.actionAddSite.setText(site_text)
+                self.context_menu.addAction(self.context_menu.actionAddSite)
+                self.context_menu.actionAddSite.triggered.connect(self.add_site)
+        elif level == 1:
+            parent = selected_item.parent()
+            if str(parent.text()) == "Sites":
+                self.context_menu.actionAddControlFile = QtWidgets.QAction(self)
+                self.context_menu.actionAddControlFile.setText("Add control file")
+                self.context_menu.addAction(self.context_menu.actionAddControlFile)
+                self.context_menu.actionAddControlFile.triggered.connect(self.add_control_file)
+                self.context_menu.actionAddSiteAbove = QtWidgets.QAction(self)
+                self.context_menu.actionAddSiteAbove.setText("Add site")
+                self.context_menu.addAction(self.context_menu.actionAddSiteAbove)
+                self.context_menu.actionAddSiteAbove.triggered.connect(self.add_site_above)
+                self.context_menu.addSeparator()
+                self.context_menu.actionRemoveSite = QtWidgets.QAction(self)
+                self.context_menu.actionRemoveSite.setText("Remove site")
+                self.context_menu.addAction(self.context_menu.actionRemoveSite)
+                self.context_menu.actionRemoveSite.triggered.connect(self.remove_item)
+        elif level == 2:
+            parent = selected_item.parent()
+            section = selected_item.parent().parent()
+            if (str(section.text()) == "Sites"):
+                if (selected_item.column() == 0):
+                    self.context_menu.actionAddControlFileAbove = QtWidgets.QAction(self)
+                    self.context_menu.actionAddControlFileAbove.setText("Add control file")
+                    self.context_menu.addAction(self.context_menu.actionAddControlFileAbove)
+                    self.context_menu.actionAddControlFileAbove.triggered.connect(self.add_control_file_above)
+                    self.context_menu.addSeparator()
+                    self.context_menu.actionRemoveInputFile = QtWidgets.QAction(self)
+                    self.context_menu.actionRemoveInputFile.setText("Remove file")
+                    self.context_menu.addAction(self.context_menu.actionRemoveInputFile)
+                    self.context_menu.actionRemoveInputFile.triggered.connect(self.remove_cfg_file)
+                elif (selected_item.column() == 1):
+                    # edit the selected control file
+                    if os.path.isfile(selected_item.text()):
+                        self.context_menu.actionEditInputFile = QtWidgets.QAction(self)
+                        self.context_menu.actionEditInputFile.setText("Edit")
+                        self.context_menu.addAction(self.context_menu.actionEditInputFile)
+                        arg = lambda: self.main_gui.file_open(file_uri=selected_item.text())
+                        self.context_menu.actionEditInputFile.triggered.connect(arg)
+                    # browse for a control file
+                    self.context_menu.actionBrowseInputFile = QtWidgets.QAction(self)
+                    self.context_menu.actionBrowseInputFile.setText("Browse...")
+                    self.context_menu.addAction(self.context_menu.actionBrowseInputFile)
+                    self.context_menu.actionBrowseInputFile.triggered.connect(self.browse_input_file)
+        elif level == 3:
+            pass
+        self.context_menu.exec_(self.view.viewport().mapToGlobal(position))
+
+    def double_click(self):
+        """ Save the selected text on double click events."""
+        idx = self.view.selectedIndexes()
+        self.double_click_selected_text = idx[0].data()
+        return
+
+    def edit_batch_gui(self):
+        """ Edit batch control file GUI."""
+        # get a QTreeView and a standard model
+        self.view = myTreeView()
+        # get a QStandardItemModel
+        self.model = QtGui.QStandardItemModel()
+        # add the model to the view
+        self.view.setModel(self.model)
+        # set the context menu policy
+        self.view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        # connect the context menu requested signal to appropriate slot
+        self.view.customContextMenuRequested.connect(self.context_menu)
+        self.view.doubleClicked.connect(self.double_click)
+        # do the QTreeView layout
+        vbox = QtWidgets.QVBoxLayout()
+        vbox.addWidget(self.view)
+        self.setLayout(vbox)
+        self.setGeometry(300, 300, 600, 400)
+        # build the model
+        self.get_model_from_data()
+        # set the default width for the first column
+        self.view.setColumnWidth(0, 200)
+        # expand the top level of the sections
+        for row in range(self.model.rowCount()):
+            idx = self.model.index(row, 0)
+            self.view.expand(idx)
+
+    def get_data_from_model(self):
+        """ Iterate over the model and get the data."""
+        cfg = ConfigObj(indent_type="    ", list_values=False)
+        cfg.filename = self.cfg.filename
+        cfg["level"] = "batch_sites"
+        model = self.model
+        # there must be a way to do this recursively
+        for i in range(model.rowCount()):
+            section = model.item(i)
+            key1 = str(section.text())
+            cfg[key1] = {}
+            if key1 in ["Options"]:
+                # sections with only 1 level
+                for j in range(section.rowCount()):
+                    key2 = str(section.child(j, 0).text())
+                    val2 = str(section.child(j, 1).text())
+                    cfg[key1][key2] = val2
+            elif key1 in ["Sites"]:
+                # sections with 2 levels
+                for j in range(section.rowCount()):
+                    subsection = section.child(j)
+                    key2 = str(subsection.text())
+                    cfg[key1][key2] = {}
+                    for k in range(subsection.rowCount()):
+                        key3 = str(subsection.child(k, 0).text())
+                        val3 = str(subsection.child(k, 1).text())
+                        cfg[key1][key2][key3] = val3
+        return cfg
+
+    def get_existing_entries(self):
+        """ Get a list of existing entries in the current section."""
+        # index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from its index
+        selected_item = idx.model().itemFromIndex(idx)
+        # build a list of existing QC checks
+        existing_entries = []
+        if selected_item.hasChildren():
+            for i in range(selected_item.rowCount()):
+                existing_entries.append(str(selected_item.child(i, 0).text()))
+        return existing_entries
+
+    def get_keyval_by_key_name(self, section, key):
+        """ Get the value from a section based on the key name."""
+        found = False
+        val_child = ""
+        key_child = ""
+        for i in range(section.rowCount()):
+            if str(section.child(i, 0).text()) == str(key):
+                found = True
+                key_child = str(section.child(i, 0).text())
+                val_child = str(section.child(i, 1).text())
+                break
+        return key_child, val_child, found, i
+
+    def get_keyval_by_val_name(self, section, val):
+        """ Get the value from a section based on the value name."""
+        found = False
+        key_child = ""
+        val_child = ""
+        for i in range(section.rowCount()):
+            if str(section.child(i, 1).text()) == str(val):
+                found = True
+                key_child = str(section.child(i, 0).text())
+                val_child = str(section.child(i, 1).text())
+                break
+        return key_child, val_child, found, i
+
+    def get_level_selected_item(self):
+        """ Get the level of the selected item."""
+        level = 0
+        idx = self.view.selectedIndexes()[0]
+        while idx.parent().isValid():
+            idx = idx.parent()
+            level += 1
+        return level
+
+    def get_model_from_data(self):
+        """ Build model from the control file."""
+        self.model.setHorizontalHeaderLabels(['Parameter', 'Value'])
+        self.model.itemChanged.connect(self.handleItemChanged)
+        # there must be some way to do this recursively
+        self.sections = {}
+        for key1 in self.cfg:
+            if key1 in ["Options"]:
+                # sections with only 1 level
+                self.sections[key1] = QtGui.QStandardItem(key1)
+                self.sections[key1].setEditable(False)
+                for key2 in self.cfg[key1]:
+                    val = self.cfg[key1][key2]
+                    child0 = QtGui.QStandardItem(key2)
+                    child0.setEditable(False)
+                    child1 = QtGui.QStandardItem(str(val))
+                    self.sections[key1].appendRow([child0, child1])
+                self.model.appendRow(self.sections[key1])
+            elif key1 in ["Sites"]:
                 # sections with 2 levels
                 self.sections[key1] = QtGui.QStandardItem(key1)
                 self.sections[key1].setEditable(False)
@@ -1425,7 +1897,7 @@ class edit_cfg_L1(QtWidgets.QWidget):
         """ Iterate over the model and get the data."""
         cfg = ConfigObj(indent_type="    ", list_values=False)
         cfg.filename = self.cfg.filename
-        cfg["level"] = "L1"
+        cfg["level"] = self.cfg["level"]
         model = self.model
         # there must be a way to do this recursively
         for i in range(model.rowCount()):
@@ -2052,6 +2524,25 @@ class edit_cfg_L2(QtWidgets.QWidget):
         selected_item.appendRow([child0, child1])
         self.update_tab_text()
 
+    def add_madcheck(self):
+        """ Add the MAD check to a variable."""
+        idx = self.view.selectedIndexes()[0]
+        selected_item = idx.model().itemFromIndex(idx)
+        if selected_item.text().split("_")[0] == "Fco2":
+            edge_threshold = 6
+        elif selected_item.text().split("_")[0] in ["Fe", "Fh"]:
+            edge_threshold = 100
+        else:
+            edge_threshold = "20,80"
+        new_qc = {"MADCheck":{"Fsd_threshold": 12, "edge_threshold": edge_threshold,
+                              "window_size": 13, "zfc": 5.5,}}
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        self.add_qc_check(selected_item, new_qc)
+        self.update_tab_text()
+
     def add_options_section(self):
         """ Add an Options section."""
         self.sections["Options"] = QtGui.QStandardItem("Options")
@@ -2566,6 +3057,11 @@ class edit_cfg_L2(QtWidgets.QWidget):
                     self.context_menu.actionAddLowerCheck.setText("Add LowerCheck")
                     self.context_menu.addAction(self.context_menu.actionAddLowerCheck)
                     self.context_menu.actionAddLowerCheck.triggered.connect(self.add_lowercheck)
+                if "MADCheck" not in existing_entries:
+                    self.context_menu.actionAddMADCheck = QtWidgets.QAction(self)
+                    self.context_menu.actionAddMADCheck.setText("Add MADCheck")
+                    self.context_menu.addAction(self.context_menu.actionAddMADCheck)
+                    self.context_menu.actionAddMADCheck.triggered.connect(self.add_madcheck)
                 if "UpperCheck" not in existing_entries:
                     self.context_menu.actionAddUpperCheck = QtWidgets.QAction(self)
                     self.context_menu.actionAddUpperCheck.setText("Add UpperCheck")
@@ -2645,8 +3141,7 @@ class edit_cfg_L2(QtWidgets.QWidget):
                 self.context_menu.addSeparator()
                 add_separator = False
             if str(idx.data()) in ["RangeCheck", "DependencyCheck", "DiurnalCheck", "ExcludeDates",
-                                   "ExcludeHours", "LowerCheck", "UpperCheck", "CorrectWindDirection",
-                                   "Linear"]:
+                                   "ExcludeHours", "LowerCheck", "MADCheck", "UpperCheck"]:
                 self.context_menu.actionRemoveQCCheck = QtWidgets.QAction(self)
                 self.context_menu.actionRemoveQCCheck.setText("Remove QC check")
                 self.context_menu.addAction(self.context_menu.actionRemoveQCCheck)
@@ -3107,14 +3602,6 @@ class edit_cfg_L3(QtWidgets.QWidget):
         self.add_qc_check(selected_item, new_qc)
         self.update_tab_text()
 
-    def add_ApplyWPL_to_options(self):
-        """ Add ApplyWPL to the [Options] section."""
-        child0 = QtGui.QStandardItem("ApplyWPL")
-        child0.setEditable(False)
-        child1 = QtGui.QStandardItem("Yes")
-        self.sections["Options"].appendRow([child0, child1])
-        self.update_tab_text()
-
     def add_diurnalcheck(self):
         """ Add a diurnal check to a variable."""
         new_qc = {"DiurnalCheck":{"numsd":"5"}}
@@ -3248,6 +3735,25 @@ class edit_cfg_L3(QtWidgets.QWidget):
         child0.setEditable(False)
         child1 = QtGui.QStandardItem("No")
         self.sections["Options"].appendRow([child0, child1])
+        self.update_tab_text()
+
+    def add_madcheck(self):
+        """ Add the MAD check to a variable."""
+        idx = self.view.selectedIndexes()[0]
+        selected_item = idx.model().itemFromIndex(idx)
+        if selected_item.text().split("_")[0] == "Fco2":
+            edge_threshold = 6
+        elif selected_item.text().split("_")[0] in ["Fe", "Fh"]:
+            edge_threshold = 100
+        else:
+            edge_threshold = ""
+        new_qc = {"MADCheck":{"Fsd_threshold": 12, "edge_threshold": edge_threshold,
+                              "window_size": 13, "zfc": 5.5,}}
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        self.add_qc_check(selected_item, new_qc)
         self.update_tab_text()
 
     def add_massmancorrection(self):
@@ -3686,11 +4192,6 @@ class edit_cfg_L3(QtWidgets.QWidget):
                     self.context_menu.actionAddApplyFco2Storage.setText("ApplyFco2Storage")
                     self.context_menu.addAction(self.context_menu.actionAddApplyFco2Storage)
                     self.context_menu.actionAddApplyFco2Storage.triggered.connect(self.add_applyfco2storage_to_options)
-                if "ApplyWPL" not in existing_entries:
-                    self.context_menu.actionAddApplyWPL = QtWidgets.QAction(self)
-                    self.context_menu.actionAddApplyWPL.setText("ApplyWPL")
-                    self.context_menu.addAction(self.context_menu.actionAddApplyWPL)
-                    self.context_menu.actionAddApplyWPL.triggered.connect(self.add_ApplyWPL_to_options)
                 if "CalculateFluxes" not in existing_entries:
                     self.context_menu.actionAddCalculateFluxes = QtWidgets.QAction(self)
                     self.context_menu.actionAddCalculateFluxes.setText("CalculateFluxes")
@@ -3803,10 +4304,9 @@ class edit_cfg_L3(QtWidgets.QWidget):
                     self.context_menu.addAction(self.context_menu.actionRemoveOption)
                     self.context_menu.actionRemoveOption.triggered.connect(self.remove_item)
                 elif (selected_item.column() == 1) and (key in ["2DCoordRotation", "ApplyFco2Storage",
-                                                                "ApplyWPL", "CalculateFluxes",
-                                                                "CorrectIndividualFg", "CorrectFgForStorage",
-                                                                "KeepIntermediateSeries", "MassmanCorrection",
-                                                                "UseFhvforFh"]):
+                                                                "CalculateFluxes", "CorrectIndividualFg",
+                                                                "CorrectFgForStorage", "KeepIntermediateSeries",
+                                                                "MassmanCorrection", "UseFhvforFh"]):
                     if selected_text != "Yes":
                         self.context_menu.actionChangeOption = QtWidgets.QAction(self)
                         self.context_menu.actionChangeOption.setText("Yes")
@@ -3859,6 +4359,11 @@ class edit_cfg_L3(QtWidgets.QWidget):
                     self.context_menu.actionAddDiurnalCheck.setText("Add DiurnalCheck")
                     self.context_menu.addAction(self.context_menu.actionAddDiurnalCheck)
                     self.context_menu.actionAddDiurnalCheck.triggered.connect(self.add_diurnalcheck)
+                if "MADCheck" not in existing_entries:
+                    self.context_menu.actionAddMADCheck = QtWidgets.QAction(self)
+                    self.context_menu.actionAddMADCheck.setText("Add MADCheck")
+                    self.context_menu.addAction(self.context_menu.actionAddMADCheck)
+                    self.context_menu.actionAddMADCheck.triggered.connect(self.add_madcheck)
                 if "ExcludeDates" not in existing_entries:
                     self.context_menu.actionAddExcludeDates = QtWidgets.QAction(self)
                     self.context_menu.actionAddExcludeDates.setText("Add ExcludeDates")
@@ -3988,13 +4493,12 @@ class edit_cfg_L3(QtWidgets.QWidget):
                 self.context_menu.addSeparator()
                 add_separator = False
             if str(idx.data()) in ["RangeCheck", "DependencyCheck", "DiurnalCheck", "ExcludeDates",
-                                   "ExcludeHours", "LowerCheck", "UpperCheck", "CorrectWindDirection",
-                                   "Linear"]:
+                                   "MADCheck", "LowerCheck", "UpperCheck"]:
                 self.context_menu.actionRemoveQCCheck = QtWidgets.QAction(self)
                 self.context_menu.actionRemoveQCCheck.setText("Remove QC check")
                 self.context_menu.addAction(self.context_menu.actionRemoveQCCheck)
                 self.context_menu.actionRemoveQCCheck.triggered.connect(self.remove_item)
-            if (str(idx.data()) in ["AverageSeries", "MergeSeries"]):
+            if (str(idx.data()) in ["AverageSeries", "ApplyFco2Storage", "MergeSeries"]):
                 self.context_menu.actionRemoveMergeSeriesItem = QtWidgets.QAction(self)
                 self.context_menu.actionRemoveMergeSeriesItem.setText("Remove item")
                 self.context_menu.addAction(self.context_menu.actionRemoveMergeSeriesItem)
@@ -4192,6 +4696,7 @@ class edit_cfg_L3(QtWidgets.QWidget):
                     parent2 = QtGui.QStandardItem(key2)
                     for key3 in sorted(list(self.cfg[key1][key2].keys())):
                         if key3 in ["RangeCheck", "DependencyCheck", "DiurnalCheck", "ExcludeDates",
+                                    "LowerCheck", "UpperCheck", "MADCheck",
                                     "ApplyFco2Storage", "MergeSeries", "AverageSeries"]:
                             parent3 = QtGui.QStandardItem(key3)
                             parent3.setEditable(False)
@@ -4366,7 +4871,7 @@ class edit_cfg_climatology(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -4654,7 +5159,7 @@ class edit_cfg_concatenate(QtWidgets.QWidget):
                 # sections with only 1 level
                 self.sections[key1] = QtGui.QStandardItem(key1)
                 self.sections[key1].setEditable(False)
-                for key2 in self.cfg[key1]:
+                for key2 in sorted(list(self.cfg[key1].keys())):
                     val = self.cfg[key1][key2]
                     child0 = QtGui.QStandardItem(key2)
                     child0.setEditable(False)
@@ -4748,6 +5253,11 @@ class edit_cfg_concatenate(QtWidgets.QWidget):
             # sections with only 1 level
             if selected_text == "Options":
                 existing_entries = self.get_existing_entries()
+                if "ApplyFco2Storage" not in existing_entries:
+                    self.context_menu.actionAddApplyFco2Storage = QtWidgets.QAction(self)
+                    self.context_menu.actionAddApplyFco2Storage.setText("ApplyFco2Storage")
+                    self.context_menu.addAction(self.context_menu.actionAddApplyFco2Storage)
+                    self.context_menu.actionAddApplyFco2Storage.triggered.connect(self.add_applyfco2storage)
                 if "NumberOfDimensions" not in existing_entries:
                     self.context_menu.actionAddNumberOfDimensions = QtWidgets.QAction(self)
                     self.context_menu.actionAddNumberOfDimensions.setText("NumberOfDimensions")
@@ -4791,22 +5301,25 @@ class edit_cfg_concatenate(QtWidgets.QWidget):
         elif level == 1:
             parent = selected_item.parent()
             key = str(parent.child(selected_item.row(),0).text())
-            if (str(parent.text()) == "Options") and (selected_item.column() == 0):
-                self.context_menu.actionRemoveOption = QtWidgets.QAction(self)
-                self.context_menu.actionRemoveOption.setText("Remove option")
-                self.context_menu.addAction(self.context_menu.actionRemoveOption)
-                self.context_menu.actionRemoveOption.triggered.connect(self.remove_item)
-            elif (selected_item.column() == 1) and (key in ["Truncate", "DoFingerprints"]):
-                if selected_text != "Yes":
-                    self.context_menu.actionChangeOption = QtWidgets.QAction(self)
-                    self.context_menu.actionChangeOption.setText("Yes")
-                    self.context_menu.addAction(self.context_menu.actionChangeOption)
-                    self.context_menu.actionChangeOption.triggered.connect(lambda:self.change_selected_text("Yes"))
-                if selected_text != "No":
-                    self.context_menu.actionChangeOption = QtWidgets.QAction(self)
-                    self.context_menu.actionChangeOption.setText("No")
-                    self.context_menu.addAction(self.context_menu.actionChangeOption)
-                    self.context_menu.actionChangeOption.triggered.connect(lambda:self.change_selected_text("No"))
+            if (str(parent.text()) == "Options"):
+                if (selected_item.column() == 0):
+                    self.context_menu.actionRemoveOption = QtWidgets.QAction(self)
+                    self.context_menu.actionRemoveOption.setText("Remove option")
+                    self.context_menu.addAction(self.context_menu.actionRemoveOption)
+                    self.context_menu.actionRemoveOption.triggered.connect(self.remove_item)
+                elif (selected_item.column() == 1) and (key in ["ApplyFco2Storage",
+                                                                "DoFingerprints",
+                                                                "Truncate"]):
+                    if selected_text != "Yes":
+                        self.context_menu.actionChangeOption = QtWidgets.QAction(self)
+                        self.context_menu.actionChangeOption.setText("Yes")
+                        self.context_menu.addAction(self.context_menu.actionChangeOption)
+                        self.context_menu.actionChangeOption.triggered.connect(lambda:self.change_selected_text("Yes"))
+                    if selected_text != "No":
+                        self.context_menu.actionChangeOption = QtWidgets.QAction(self)
+                        self.context_menu.actionChangeOption.setText("No")
+                        self.context_menu.addAction(self.context_menu.actionChangeOption)
+                        self.context_menu.actionChangeOption.triggered.connect(lambda:self.change_selected_text("No"))
             elif str(parent.text()) == "Files":
                 if ((selected_item.column() == 0) and (selected_text == "In")):
                     self.context_menu.actionAddInputFile = QtWidgets.QAction(self)
@@ -4920,6 +5433,12 @@ class edit_cfg_concatenate(QtWidgets.QWidget):
         tab_text = str(self.tabs.tabText(self.tabs.tab_index_current))
         if "*" not in tab_text:
             self.tabs.setTabText(self.tabs.tab_index_current, tab_text+"*")
+
+    def add_applyfco2storage(self):
+        """ Add the ApplyFco2Storage option to the context menu."""
+        dict_to_add = {"ApplyFco2Storage": "Yes"}
+        # add the subsubsection
+        self.add_subsection(dict_to_add)
 
     def add_dofingerprints(self):
         """ Add the DoFingerprints option to the context menu."""
@@ -5035,7 +5554,7 @@ class edit_cfg_concatenate(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_path = QtCore.QDir.toNativeSeparators(str(new_file_path))
@@ -5187,7 +5706,7 @@ class edit_cfg_cpd_barr(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -5529,7 +6048,7 @@ class edit_cfg_cpd_mchugh(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -5871,7 +6390,7 @@ class edit_cfg_cpd_mcnew(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -6213,7 +6732,7 @@ class edit_cfg_mpt(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -7729,6 +8248,31 @@ class edit_cfg_L5(QtWidgets.QWidget):
         # add the subsection
         self.add_subsection(dict_to_add)
 
+    def add_madcheck(self):
+        """ Add the MAD check to a variable."""
+        idx = self.view.selectedIndexes()[0]
+        selected_item = idx.model().itemFromIndex(idx)
+        if selected_item.text().split("_")[0] == "Fco2":
+            edge_threshold = 6
+        elif selected_item.text().split("_")[0] in ["Fe", "Fh"]:
+            edge_threshold = 100
+        else:
+            edge_threshold = "20,80"
+        new_qc = {"MADCheck":{"Fsd_threshold": 12, "edge_threshold": edge_threshold,
+                              "window_size": 13, "zfc": 5.5,}}
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        self.add_qc_check(selected_item, new_qc)
+        self.update_tab_text()
+
+    def add_mask_long_gaps(self):
+        """ Add the mask long gaps option."""
+        dict_to_add = {"mask long gaps": "Yes"}
+        # add the subsubsection
+        self.add_subsection(dict_to_add)
+
     def add_maxgapinterpolate(self):
         """ Add MaxGapInterpolate to the [Options] section."""
         dict_to_add = {"MaxGapInterpolate": "3"}
@@ -7777,6 +8321,19 @@ class edit_cfg_L5(QtWidgets.QWidget):
         d2a = {"New variable": var_dict}
         self.add_variable(d2a)
         # update the tab text with an asterix if required
+        self.update_tab_text()
+
+    def add_qc_check(self, selected_item, new_qc):
+        for key1 in new_qc:
+            parent = QtGui.QStandardItem(key1)
+            parent.setEditable(False)
+            for key in new_qc[key1]:
+                val = str(new_qc[key1][key])
+                child0 = QtGui.QStandardItem(key)
+                child0.setEditable(False)
+                child1 = QtGui.QStandardItem(val)
+                parent.appendRow([child0, child1])
+            selected_item.appendRow(parent)
         self.update_tab_text()
 
     def add_rangecheck(self):
@@ -8413,6 +8970,11 @@ class edit_cfg_L5(QtWidgets.QWidget):
                     self.context_menu.addAction(self.context_menu.actionAddExcludeDates)
                     self.context_menu.actionAddExcludeDates.triggered.connect(self.add_excludedates)
                     add_separator = True
+                if "MADCheck" not in existing_entries:
+                    self.context_menu.actionAddMADCheck = QtWidgets.QAction(self)
+                    self.context_menu.actionAddMADCheck.setText("Add MADCheck")
+                    self.context_menu.addAction(self.context_menu.actionAddMADCheck)
+                    self.context_menu.actionAddMADCheck.triggered.connect(self.add_madcheck)
                 if add_separator:
                     add_separator = False
                     self.context_menu.addSeparator()
@@ -8440,7 +9002,7 @@ class edit_cfg_L5(QtWidgets.QWidget):
             parent = selected_item.parent()
             grand_parent = selected_item.parent().parent()
             subsubsection_name = str(idx.data())
-            if subsubsection_name in ["RangeCheck", "DependencyCheck", "DiurnalCheck"]:
+            if subsubsection_name in ["RangeCheck", "DependencyCheck", "DiurnalCheck", "MADCheck"]:
                 self.context_menu.actionRemoveQCCheck = QtWidgets.QAction(self)
                 self.context_menu.actionRemoveQCCheck.setText("Remove QC check")
                 self.context_menu.addAction(self.context_menu.actionRemoveQCCheck)
@@ -8485,6 +9047,11 @@ class edit_cfg_L5(QtWidgets.QWidget):
                     self.context_menu.addAction(self.context_menu.actionAddSOLOSettings)
                     self.context_menu.actionAddSOLOSettings.triggered.connect(self.add_solo_settings)
                     add_separator = True
+                if "mask long gaps" not in existing_entries:
+                    self.context_menu.actionAddMaskLongGaps = QtWidgets.QAction(self)
+                    self.context_menu.actionAddMaskLongGaps.setText("Add mask long gaps")
+                    self.context_menu.addAction(self.context_menu.actionAddMaskLongGaps)
+                    self.context_menu.actionAddMaskLongGaps.triggered.connect(self.add_mask_long_gaps)
                 if add_separator:
                     add_separator = False
                     self.context_menu.addSeparator()
@@ -8499,14 +9066,31 @@ class edit_cfg_L5(QtWidgets.QWidget):
                     self.context_menu.actionAddMDStarget.setText("Add target")
                     self.context_menu.addAction(self.context_menu.actionAddMDStarget)
                     self.context_menu.actionAddMDStarget.triggered.connect(self.add_mds_target)
+                if "mask long gaps" not in existing_entries:
+                    self.context_menu.actionAddMaskLongGaps = QtWidgets.QAction(self)
+                    self.context_menu.actionAddMaskLongGaps.setText("Add mask long gaps")
+                    self.context_menu.addAction(self.context_menu.actionAddMaskLongGaps)
+                    self.context_menu.actionAddMaskLongGaps.triggered.connect(self.add_mask_long_gaps)
         elif level == 4:
             selected_text = str(idx.data())
-            if selected_text in ["solo_settings"]:
+            parent = selected_item.parent()
+            key = str(parent.child(selected_item.row(),0).text())
+            if (selected_item.column() == 0) and selected_text in ["solo_settings", "mask long gaps"]:
                 self.context_menu.actionRemoveSOLOSettings = QtWidgets.QAction(self)
                 self.context_menu.actionRemoveSOLOSettings.setText("Remove item")
                 self.context_menu.addAction(self.context_menu.actionRemoveSOLOSettings)
                 self.context_menu.actionRemoveSOLOSettings.triggered.connect(self.remove_item)
-
+            if (selected_item.column() == 1) and (key == "mask long gaps"):
+                if selected_text != "Yes":
+                    self.context_menu.actionChangeMaskLongGaps = QtWidgets.QAction(self)
+                    self.context_menu.actionChangeMaskLongGaps.setText("Yes")
+                    self.context_menu.addAction(self.context_menu.actionChangeMaskLongGaps)
+                    self.context_menu.actionChangeMaskLongGaps.triggered.connect(lambda:self.change_selected_text("Yes"))
+                if selected_text != "No":
+                    self.context_menu.actionChangeMaskLongGaps = QtWidgets.QAction(self)
+                    self.context_menu.actionChangeMaskLongGaps.setText("No")
+                    self.context_menu.addAction(self.context_menu.actionChangeMaskLongGaps)
+                    self.context_menu.actionChangeMaskLongGaps.triggered.connect(lambda:self.change_selected_text("No"))
         self.context_menu.exec_(self.view.viewport().mapToGlobal(position))
 
     def double_click(self):
@@ -8593,7 +9177,8 @@ class edit_cfg_L5(QtWidgets.QWidget):
                                     key5 = str(subsubsubsection.child(m, 0).text())
                                     val5 = str(subsubsubsection.child(m, 1).text())
                                     cfg[key1][key2][key3][key4][key5] = val5
-                        elif key3 in ["MergeSeries", "RangeCheck", "DiurnalCheck", "DependencyCheck", "ExcludeDates"]:
+                        elif key3 in ["MergeSeries", "RangeCheck", "DiurnalCheck",
+                                      "DependencyCheck", "ExcludeDates", "MADCheck"]:
                             for l in range(subsubsection.rowCount()):
                                 key4 = str(subsubsection.child(l, 0).text())
                                 val4 = str(subsubsection.child(l, 1).text())
@@ -8695,7 +9280,8 @@ class edit_cfg_L5(QtWidgets.QWidget):
                                     child1 = QtGui.QStandardItem(val)
                                     parent4.appendRow([child0, child1])
                                 parent3.appendRow(parent4)
-                        elif key3 in ["MergeSeries", "RangeCheck", "ExcludeDates", "DiurnalCheck", "DependencyCheck"]:
+                        elif key3 in ["MergeSeries", "RangeCheck", "ExcludeDates",
+                                      "DiurnalCheck", "DependencyCheck", "MADCheck"]:
                             for key4 in self.cfg[key1][key2][key3]:
                                 val = self.cfg[key1][key2][key3][key4]
                                 child0 = QtGui.QStandardItem(key4)
@@ -9954,7 +10540,7 @@ class edit_cfg_nc2csv_biomet(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -10254,7 +10840,7 @@ class edit_cfg_nc2csv_ecostress(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -10554,7 +11140,7 @@ class edit_cfg_nc2csv_fluxnet(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -10574,6 +11160,272 @@ class edit_cfg_nc2csv_fluxnet(QtWidgets.QWidget):
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getSaveFileName(caption="Choose an output file ...",
                                                               directory=file_path, filter="*.csv")[0]
+        # update the model
+        if len(str(new_file_path)) > 0:
+            new_file_parts = os.path.split(str(new_file_path))
+            parent.child(selected_item.row(), 1).setText(new_file_parts[1])
+
+    def get_keyval_by_key_name(self, section, key):
+        """ Get the value from a section based on the key name."""
+        found = False
+        val_child = ""
+        key_child = ""
+        for i in range(section.rowCount()):
+            if str(section.child(i, 0).text()) == str(key):
+                found = True
+                key_child = str(section.child(i, 0).text())
+                val_child = str(section.child(i, 1).text())
+                break
+        return key_child, val_child, found, i
+
+    def get_level_selected_item(self):
+        """ Get the level of the selected item."""
+        indexes = self.view.selectedIndexes()
+        level = -1
+        if len(indexes) > 0:
+            level = 0
+            index = indexes[0]
+            while index.parent().isValid():
+                index = index.parent()
+                level += 1
+        return level
+
+    def handleItemChanged(self, item):
+        """ Handler for when view items are edited."""
+        # update the control file contents
+        self.cfg = self.get_data_from_model()
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        self.update_tab_text()
+
+    def remove_item(self):
+        """ Remove an item from the view."""
+        # loop over selected items in the tree
+        for idx in self.view.selectedIndexes():
+            # get the selected item from the index
+            selected_item = idx.model().itemFromIndex(idx)
+            # get the parent of the selected item
+            parent = selected_item.parent()
+            # remove the row
+            parent.removeRow(selected_item.row())
+        self.update_tab_text()
+
+    def update_tab_text(self):
+        """ Add an asterisk to the tab title text to indicate tab contents have changed."""
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        tab_text = str(self.tabs.tabText(self.tabs.tab_index_current))
+        if "*" not in tab_text:
+            self.tabs.setTabText(self.tabs.tab_index_current, tab_text+"*")
+
+class edit_cfg_nc2csv_oneflux(QtWidgets.QWidget):
+    def __init__(self, main_gui):
+        super(edit_cfg_nc2csv_oneflux, self).__init__()
+        self.cfg = copy.deepcopy(main_gui.file)
+        self.tabs = main_gui.tabs
+        self.edit_nc2csv_oneflux_gui()
+
+    def edit_nc2csv_oneflux_gui(self):
+        """ Edit an nc2csv_oneflux control file GUI."""
+        # get a QTreeView and a standard model
+        self.view = myTreeView()
+        # get a QStandardItemModel
+        self.model = QtGui.QStandardItemModel()
+        # add the model to the view
+        self.view.setModel(self.model)
+        # set the context menu policy
+        self.view.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        # connect the context menu requested signal to appropriate slot
+        self.view.customContextMenuRequested.connect(self.context_menu)
+        # do the QTreeView layout
+        vbox = QtWidgets.QVBoxLayout()
+        vbox.addWidget(self.view)
+        self.setLayout(vbox)
+        self.setGeometry(300, 300, 600, 400)
+        # build the model
+        self.get_model_from_data()
+        # set the default width for the first column
+        self.view.setColumnWidth(0, 200)
+        # expand the top level of the sections
+        for row in range(self.model.rowCount()):
+            idx = self.model.index(row, 0)
+            self.view.expand(idx)
+
+    def get_model_from_data(self):
+        """ Build the data model."""
+        self.model.setHorizontalHeaderLabels(['Parameter', 'Value'])
+        self.model.itemChanged.connect(self.handleItemChanged)
+        # there must be someway outa here, said the Joker to the Thief ...
+        self.sections = {}
+        for key1 in self.cfg:
+            if not self.cfg[key1]:
+                continue
+            if key1 in ["Files"]:
+                # sections with only 1 level
+                self.sections[key1] = QtGui.QStandardItem(key1)
+                for key2 in self.cfg[key1]:
+                    val = self.cfg[key1][key2]
+                    child0 = QtGui.QStandardItem(key2)
+                    child1 = QtGui.QStandardItem(val)
+                    self.sections[key1].appendRow([child0, child1])
+                self.model.appendRow(self.sections[key1])
+            elif key1 in ["Variables"]:
+                # sections with 2 levels
+                self.sections[key1] = QtGui.QStandardItem(key1)
+                # key2 is the variable name
+                for key2 in self.cfg[key1]:
+                    parent2 = QtGui.QStandardItem(key2)
+                    # key3 is the variable options
+                    for key3 in self.cfg[key1][key2]:
+                        val = self.cfg[key1][key2][key3]
+                        child0 = QtGui.QStandardItem(key3)
+                        child1 = QtGui.QStandardItem(val)
+                        parent2.appendRow([child0, child1])
+                    self.sections[key1].appendRow(parent2)
+                self.model.appendRow(self.sections[key1])
+
+    def get_data_from_model(self):
+        """ Iterate over the model and get the data."""
+        cfg = ConfigObj(indent_type="    ", list_values=False)
+        cfg.filename = self.cfg.filename
+        cfg["level"] = "nc2csv_oneflux"
+        model = self.model
+        # there must be a way to do this recursively
+        for i in range(model.rowCount()):
+            section = model.item(i)
+            key1 = str(section.text())
+            cfg[key1] = {}
+            if key1 in ["Files"]:
+                # sections with only 1 level
+                for j in range(section.rowCount()):
+                    key2 = str(section.child(j, 0).text())
+                    val2 = str(section.child(j, 1).text())
+                    cfg[key1][key2] = val2
+            elif key1 in ["Variables"]:
+                # sections with 2 levels
+                for j in range(section.rowCount()):
+                    subsection = section.child(j)
+                    key2 = str(subsection.text())
+                    cfg[key1][key2] = {}
+                    for k in range(subsection.rowCount()):
+                        key3 = str(subsection.child(k, 0).text())
+                        val3 = str(subsection.child(k, 1).text())
+                        cfg[key1][key2][key3] = val3
+
+        return cfg
+
+    def context_menu(self, position):
+        """ Right click context menu."""
+        # get a menu
+        self.context_menu = QtWidgets.QMenu()
+        # get the index of the selected item
+        if len(self.view.selectedIndexes()) == 0:
+            # trap right click when nothing is selected
+            return
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item text
+        selected_text = str(idx.data())
+        # get the selected item
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the level of the selected item
+        level = self.get_level_selected_item()
+        # initialise logical for inserting a separator
+        if level == 0:
+            if selected_text in ["Variables"]:
+                self.context_menu.actionAddVariable = QtWidgets.QAction(self)
+                self.context_menu.actionAddVariable.setText("Add variable")
+                self.context_menu.addAction(self.context_menu.actionAddVariable)
+                self.context_menu.actionAddVariable.triggered.connect(self.add_new_variable)
+        elif level == 1:
+            # sections with 2 levels
+            # get the parent of the selected item
+            parent = selected_item.parent()
+            if (str(parent.text()) == "Files") and (selected_item.column() == 1):
+                key = str(parent.child(selected_item.row(),0).text())
+                if key in ["file_path"]:
+                    self.context_menu.actionBrowseFilePath = QtWidgets.QAction(self)
+                    self.context_menu.actionBrowseFilePath.setText("Browse...")
+                    self.context_menu.addAction(self.context_menu.actionBrowseFilePath)
+                    self.context_menu.actionBrowseFilePath.triggered.connect(self.browse_file_path)
+                elif key in ["in_filename"]:
+                    self.context_menu.actionBrowseInputFile = QtWidgets.QAction(self)
+                    self.context_menu.actionBrowseInputFile.setText("Browse...")
+                    self.context_menu.addAction(self.context_menu.actionBrowseInputFile)
+                    self.context_menu.actionBrowseInputFile.triggered.connect(self.browse_input_file)
+            elif (str(parent.text()) == "Variables") and (selected_item.column() == 0):
+                self.context_menu.actionRemoveOption = QtWidgets.QAction(self)
+                self.context_menu.actionRemoveOption.setText("Remove variable")
+                self.context_menu.addAction(self.context_menu.actionRemoveOption)
+                self.context_menu.actionRemoveOption.triggered.connect(self.remove_item)
+        elif level == 2:
+            # sections with 3 levels
+            pass
+
+        self.context_menu.exec_(self.view.viewport().mapToGlobal(position))
+
+    def add_general_item(self):
+        """ Add a new entry to the [Files] section."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        section = idx.model().itemFromIndex(idx)
+        dict_to_add = {"New item":""}
+        # add the subsection
+        self.add_subsection(section, dict_to_add)
+
+    def add_new_variable(self):
+        """ Add a new variable to the 'Variables' section."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        parent = idx.model().itemFromIndex(idx)
+        dict_to_add = {"format": "", "name": "", "units": ""}
+        subsection = QtGui.QStandardItem("New variable")
+        self.add_subsection(subsection, dict_to_add)
+        parent.appendRow(subsection)
+        # add an asterisk to the tab text to indicate the tab contents have changed
+        self.update_tab_text()
+
+    def add_subsection(self, section, dict_to_add):
+        """ Add a subsection to the model."""
+        for key in dict_to_add:
+            val = str(dict_to_add[key])
+            child0 = QtGui.QStandardItem(key)
+            child1 = QtGui.QStandardItem(val)
+            section.appendRow([child0, child1])
+
+    def browse_file_path(self):
+        """ Browse for the data file path."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the parent of the selected item
+        parent = selected_item.parent()
+        # get the selected entry text
+        file_path = str(idx.data())
+        # dialog for new directory
+        new_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose a folder",
+                                                             file_path, QtWidgets.QFileDialog.ShowDirsOnly)
+        # quit if cancel button pressed
+        if len(str(new_dir)) > 0:
+            # make sure the string ends with a path delimiter
+            tmp_dir = QtCore.QDir.toNativeSeparators(str(new_dir))
+            new_dir = os.path.join(tmp_dir, "")
+            # update the model
+            parent.child(selected_item.row(), 1).setText(new_dir)
+
+    def browse_input_file(self):
+        """ Browse for the input data file path."""
+        # get the index of the selected item
+        idx = self.view.selectedIndexes()[0]
+        # get the selected item from the index
+        selected_item = idx.model().itemFromIndex(idx)
+        # get the parent of the selected item
+        parent = selected_item.parent()
+        # get the file_path so it can be used as a default directory
+        key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
+        # dialog for open file
+        new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -10844,7 +11696,7 @@ class edit_cfg_nc2csv_reddyproc(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -10982,7 +11834,7 @@ class edit_cfg_windrose(QtWidgets.QWidget):
         key, file_path, found, j = self.get_keyval_by_key_name(parent, "file_path")
         # dialog for open file
         new_file_path = QtWidgets.QFileDialog.getOpenFileName(caption="Choose an input file ...",
-                                                              directory=file_path)[0]
+                                                              directory=file_path, filter="*.nc")[0]
         # update the model
         if len(str(new_file_path)) > 0:
             new_file_parts = os.path.split(str(new_file_path))
@@ -11489,7 +12341,14 @@ class solo_gui(QtWidgets.QDialog):
         self.QuitButton.clicked.connect(self.call_gui_quit)
 
     def call_gui_run(self):
-        pfp_gfSOLO.gfSOLO_run_interactive(self)
+        try:
+            pfp_gfSOLO.gfSOLO_run_interactive(self)
+        except Exception:
+            msg = "Error occurred during SOLO processing "
+            logger.error(msg)
+            error_message = traceback.format_exc()
+            logger.error(error_message)
+            pfp_gfSOLO.gfSOLO_quit(self)
 
     def call_gui_quit(self):
         pfp_gfSOLO.gfSOLO_quit(self)

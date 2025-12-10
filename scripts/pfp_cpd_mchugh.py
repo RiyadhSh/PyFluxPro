@@ -19,8 +19,8 @@ from scripts import constants as c
 from scripts import pfp_io
 from scripts import pfp_utils
 
-# get the logger
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 #------------------------------------------------------------------------------
 # Return a bootstrapped sample of the passed dataframe
@@ -431,7 +431,7 @@ def CPD_run(cf):
     #fig.savefig(plot_out_name)
     #if d["show_plots"]:
         #plt.draw()
-        #pfp_utils.mypause(0.5)
+        #pfp_utils.mypause(1)
         #plt.ioff()
     #else:
         #plt.ion()
@@ -459,7 +459,7 @@ def CPD_run(cf):
     #fig.savefig(plot_out_name)
     #if d["show_plots"]:
         #plt.draw()
-        #pfp_utils.mypause(0.5)
+        #pfp_utils.mypause(1)
         #plt.ioff()
     #else:
         #plt.ion()

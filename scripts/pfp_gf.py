@@ -14,7 +14,8 @@ from scripts import pfp_io
 from scripts import pfp_ts
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 def CheckL5Drivers(ds, l5_info):
     """
@@ -280,7 +281,7 @@ def ParseL5ControlFile(cfg, ds):
             if ds.info["returncodes"]["value"] != 0:
                 return l5_info
         if "GapFillUsingMDS" in list(cfg["Fluxes"][label].keys()):
-            gfMDS_createdict(cfg, ds, l5_info, label, "GapFillUsingMDS", 530)
+            gfMDS_createdict(cfg, ds, l5_info, label, "GapFillUsingMDS", 570)
             if ds.info["returncodes"]["value"] != 0:
                 return l5_info
         if "MergeSeries" in list(cfg["Fluxes"][label].keys()):
@@ -800,6 +801,12 @@ def gfMDS_createdict(cf, ds, l5_info, label, called_by, flag_code):
             msg = " MDS: incorrect format for tolerances for " + label + ", skipping ..."
             logger.error(msg)
             continue
+        # mask long gaps option
+        sections = ["Fluxes", label, "GapFillUsingMDS", output]
+        opt = pfp_utils.get_keyvaluefromcf(cf, sections, "mask long gaps", default="Yes")
+        l5mo[output]["mask long gaps"] = True
+        if opt.lower() == "no":
+            l5mo[output]["mask long gaps"] = False
     # check that all requested targets and drivers have a mapping to
     # a FluxNet label, remove if they don't
     fluxnet_label_map = {"Fco2":"NEE", "Fe":"LE", "Fh":"H",
@@ -984,17 +991,15 @@ def gfSOLO_createdict_gui(cf, ds, l5_info, called_by):
     # start date of period to be gap filled
     opt = pfp_utils.get_keyvaluefromcf(cf, sl, "start_date", default="YYYY-MM-DD HH:mm")
     try:
-        sd = dateutil.parser.parse(opt)
+        l5s["gui"]["startdate"] = dateutil.parser.parse(opt)
     except (ValueError, TypeError):
-        sd = ldt["Data"][0].strftime("%Y-%m-%d %H:%M")
-    l5s["gui"]["startdate"] = sd
+        l5s["gui"]["startdate"] = ldt["Data"][0]
     # end date of period to be gap filled
     opt = pfp_utils.get_keyvaluefromcf(cf, sl, "end_date", default="YYYY-MM-DD HH:mm")
     try:
-        ed = dateutil.parser.parse(opt)
+        l5s["gui"]["enddate"] = dateutil.parser.parse(opt)
     except (ValueError, TypeError):
-        ed = ldt["Data"][-1].strftime("%Y-%m-%d %H:%M")
-    l5s["gui"]["enddate"] = ed
+        l5s["gui"]["enddate"] = ldt["Data"][-1]
     return
 
 def gfSOLO_createdict_info(cf, ds, l5_info, called_by):
@@ -1032,6 +1037,15 @@ def gfSOLO_createdict_info(cf, ds, l5_info, called_by):
     # truncate to last date in Imports?
     truncate = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "TruncateToImports", default="Yes")
     l5s["info"]["truncate_to_imports"] = truncate
+    # maximum length of "short" gaps in days
+    # anythng longer will be masked unless a long gap filling method is used
+    if "MaxShortGapDays" in cf["Options"]:
+        opt = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "MaxShortGapDays", default=30)
+        l5s["info"]["MaxShortGapDays"] = int(float(opt))
+        # maximum length in records
+        ts = int(float(ds.root["Attributes"]["time_step"]))
+        nperday = 24 * 60//ts
+        l5s["info"]["MaxShortGapRecords"] = l5s["info"]["MaxShortGapDays"] * nperday
     # number of records per day and maximum lags
     nperhr = int(float(60)/time_step + 0.5)
     l5s["info"]["nperday"] = int(float(24)*nperhr + 0.5)
@@ -1113,11 +1127,17 @@ def gfSOLO_createdict_outputs(cf, l5_info, target, called_by, flag_code):
         opt = pfp_utils.get_keyvaluefromcf(cf, sl, "drivers", default=drivers)
         so[output]["drivers"] = pfp_utils.string_to_list(opt)
         # fit statistics for plotting later on
-        so[output]["results"] = {"startdate":[],"enddate":[],"No. points":[],"r":[],
-                                 "Bias":[],"RMSE":[],"Frac Bias":[],"NMSE":[],
-                                 "Avg (obs)":[],"Avg (SOLO)":[],
-                                 "Var (obs)":[],"Var (SOLO)":[],"Var ratio":[],
-                                 "m_ols":[],"b_ols":[]}
+        so[output]["results"] = {"startdate": [], "middate": [],"enddate": [], "No. points": [],
+                                 "r": [], "Bias": [], "RMSE": [], "Frac Bias": [], "NMSE": [],
+                                 "Avg (obs)": [], "Avg (SOLO)": [],
+                                 "Var (obs)": [], "Var (SOLO)": [], "Var ratio": [],
+                                 "m_ols": [], "b_ols": []}
+        # mask long gaps option
+        sections = ["Fluxes", target, "GapFillUsingSOLO", output]
+        opt = pfp_utils.get_keyvaluefromcf(cf, sections, "mask long gaps", default="Yes")
+        so[output]["mask long gaps"] = True
+        if opt.lower() == "no":
+            so[output]["mask long gaps"] = False
     return
 
 # functions for GapFillFromClimatology
@@ -1298,6 +1318,9 @@ def ImportSeries(ds, info):
     if "Imports" not in list(cfg.keys()):
         return
     info["ImportSeries"] = {}
+    # processing level
+    level = ds.root["Attributes"]["processing_level"]
+    qc_prefix = 100 * int(pfp_utils.strip_non_numeric(level))
     # number of records
     nrecs = int(ds.root["Attributes"]["nc_nrecs"])
     # get the start and end datetime
@@ -1340,7 +1363,7 @@ def ImportSeries(ds, info):
         indainb, indbina = pfp_utils.FindMatchingIndices(ldt_import, ldt)
         var = pfp_utils.CreateEmptyVariable(label, nrecs, attr=var_import["Attr"])
         var["Data"][indbina] = var_import["Data"][indainb]
-        var["Flag"][indbina] = var_import["Flag"][indainb]
+        var["Flag"][indbina] = var_import["Flag"][indainb] + qc_prefix
         pfp_utils.CreateVariable(ds, var)
         info["ImportSeries"][label] = {"start": ldt[indbina[0]],
                                        "end": ldt[indbina[-1]]}

@@ -20,7 +20,8 @@ from scripts import pfp_part
 from scripts import pfp_ts
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 def CalculateNEE(ds, l6_info):
     """
@@ -304,8 +305,8 @@ def ERUsingSOLO(main_gui, ds, l6_info, called_by):
     l6_info["Options"]["called_by"] = called_by
     # update the start and end dates
     ldt = ds.root["Variables"]["DateTime"]["Data"]
-    l6_info[called_by]["info"]["startdate"] = ldt[0].strftime("%Y-%m-%d %H:%M")
-    l6_info[called_by]["info"]["enddate"] = ldt[-1].strftime("%Y-%m-%d %H:%M")
+    l6_info[called_by]["info"]["startdate"] = ldt[0]
+    l6_info[called_by]["info"]["enddate"] = ldt[-1]
     if l6_info[called_by]["info"]["call_mode"].lower() == "interactive":
         # call the ERUsingSOLO GUI
         pfp_gfSOLO.gfSOLO_gui(main_gui, ds, l6_info, called_by)
@@ -553,9 +554,7 @@ def L6_summary_plotdaily(ds_summary, l6_info):
         figure_path = os.path.join(plot_path, figure_name)
         fig.savefig(figure_path, format='png')
         if l6_info["Options"]["call_mode"].lower() == "interactive":
-            plt.draw()
-            pfp_utils.mypause(0.5)
-            plt.ioff()
+            fig.canvas.flush_events()
         else:
             plt.close(fig)
             plt.switch_backend(current_backend)
@@ -575,8 +574,9 @@ def L6_summary_plotdaily(ds_summary, l6_info):
             plt.plot(ddv["DateTime"]["Data"], ddv[label]["Data"], line, alpha=0.3)
             plt.plot(ddv["DateTime"]["Data"], pfp_ts.smooth(ddv[label]["Data"], window_len=30),
                      line, linewidth=2, label=label+" (30 day filter)")
+            ylabel = ddv[label]["Attr"]["units"]
     plt.xlabel("Date")
-    plt.ylabel(ddv["Fn"]["Attr"]["units"])
+    plt.ylabel(ylabel)
     plt.legend(loc='upper left',prop={'size':8})
     plt.tight_layout()
     sdt = ddv["DateTime"]["Data"][0].strftime("%Y%m%d")
@@ -588,9 +588,7 @@ def L6_summary_plotdaily(ds_summary, l6_info):
     figname = figname+"_"+sdt+"_"+edt+'.png'
     fig.savefig(figname,format='png')
     if l6_info["Options"]["call_mode"].lower()=="interactive":
-        plt.draw()
-        pfp_utils.mypause(0.5)
-        plt.ioff()
+        fig.canvas.flush_events()
     else:
         plt.close(fig)
         plt.switch_backend(current_backend)
@@ -705,9 +703,7 @@ def L6_summary_plotcumulative(ds_summary, l6_info):
         figure_path = os.path.join(plot_path, figure_name)
         fig.savefig(figure_path, format='png')
         if l6_info["Options"]["call_mode"].lower() == "interactive":
-            plt.draw()
-            pfp_utils.mypause(0.5)
-            plt.ioff()
+            fig.canvas.flush_events()
         else:
             plt.close(fig)
             plt.switch_backend(current_backend)
@@ -2220,7 +2216,8 @@ def rp_plot(pd, ds, output, drivers, target, iel, called_by, si=0, ei=-1):
     rect1 = [0.10, pd["margin_bottom"], pd["xy_width"], pd["xy_height"]]
     ax1 = plt.axes(rect1)
     # get the diurnal stats of the observations
-    mask = numpy.ma.mask_or(obs["Data"].mask, mod["Data"].mask)
+    mask = numpy.ma.mask_or(numpy.ma.getmaskarray(obs["Data"]),
+                            numpy.ma.getmaskarray(mod["Data"]))
     obs_mor = numpy.ma.array(obs["Data"], mask=mask, copy=True)
     dstats = pfp_utils.get_diurnalstats(dt, obs_mor, ieli)
     ax1.plot(dstats["Hr"], dstats["Av"], 'b-', label="Obs")
@@ -2320,9 +2317,7 @@ def rp_plot(pd, ds, output, drivers, target, iel, called_by, si=0, ei=-1):
     fig.savefig(figname, format='png')
     # draw the plot on the screen
     if iel["gui"]["show_plots"]:
-        plt.draw()
-        pfp_utils.mypause(0.5)
-        plt.ioff()
+        fig.canvas.flush_events()
     else:
         #plt.close(fig)
         plt.close()

@@ -7,7 +7,8 @@ from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 class ConsoleWindowLogHandler(logging.Handler, QObject):
     sigLog = pyqtSignal(str)
@@ -133,14 +134,6 @@ def change_logger_filename(logger_name, new_file_name):
             fh.setFormatter(old_log_formatter)
             logger.addHandler(fh)
     return logger
-def debug_function_enter(function_name):
-    msg = "   Entering " + function_name
-    logger.debug(msg)
-    return
-def debug_function_leave(function_name):
-    msg = "   Leaving " + function_name
-    logger.debug(msg)
-    return
 def disable_console_log(logger_name):
     console_handler = None
     logger = logging.getLogger(name=logger_name)

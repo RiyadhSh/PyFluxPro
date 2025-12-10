@@ -2,7 +2,7 @@ name: pfp_env
 channels:
   - conda-forge
 dependencies:
-  - python==3.11
+  - python
   - configobj
   - python-dateutil
   - lmfit
@@ -13,8 +13,8 @@ dependencies:
   - pandas
   - pyqt
   - pytz
-  - scipy
-  - statsmodels
+  - scipy<=1.15.3
+  - statsmodels==0.14.4
   - timezonefinder
   - windrose
   - xarray

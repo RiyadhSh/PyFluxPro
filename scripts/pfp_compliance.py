@@ -19,7 +19,8 @@ from scripts import pfp_gui
 from scripts import pfp_io
 from scripts import pfp_utils
 
-logger = logging.getLogger("pfp_log")
+pfp_log = os.environ["pfp_log"]
+logger = logging.getLogger(pfp_log)
 
 #def CheckCFCompliance(nc_file_uri):
     #"""
@@ -184,7 +185,7 @@ def climatology_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def cpd_barr_update_controlfile(cfg):
+def cpd_barr_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the CPD (Barr) control file to update the syntax from earlier OFQC/PFP
@@ -220,6 +221,7 @@ def cpd_barr_update_controlfile(cfg):
         msg = " An error occurred while updating the CPD (Barr) control file syntax"
     # clean up the variable names
     try:
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_rename(cfg, std)
     except Exception:
         ok = False
@@ -237,7 +239,7 @@ def cpd_barr_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def cpd_mchugh_update_controlfile(cfg):
+def cpd_mchugh_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the CPD (McHugh) control file to update the syntax from earlier OFQC/PFP
@@ -273,6 +275,7 @@ def cpd_mchugh_update_controlfile(cfg):
         msg = " An error occurred while updating the CPD (McHugh) control file syntax"
     # clean up the variable names
     try:
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_rename(cfg, std)
     except Exception:
         ok = False
@@ -290,7 +293,7 @@ def cpd_mchugh_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def cpd_mcnew_update_controlfile(cfg):
+def cpd_mcnew_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the CPD (McNew) control file to update the syntax from earlier OFQC/PFP
@@ -326,6 +329,7 @@ def cpd_mcnew_update_controlfile(cfg):
         msg = " An error occurred while updating the CPD (McNew) control file syntax"
     # clean up the variable names
     try:
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_rename(cfg, std)
     except Exception:
         ok = False
@@ -343,7 +347,7 @@ def cpd_mcnew_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def mpt_update_controlfile(cfg):
+def mpt_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the MPT control file to update the syntax from earlier OFQC/PFP
@@ -379,6 +383,7 @@ def mpt_update_controlfile(cfg):
         msg = " An error occurred while updating the MPT control file syntax"
     # clean up the variable names
     try:
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_rename(cfg, std)
     except Exception:
         ok = False
@@ -451,6 +456,7 @@ def ParseConcatenateControlFile(cf):
     Date: August 2019
     """
     info = {}
+    info["cfg"] = copy.deepcopy(cf)
     info["NetCDFConcatenate"] = {"OK": True}
     inc = info["NetCDFConcatenate"]
     # check the control file has a Files section
@@ -499,6 +505,10 @@ def ParseConcatenateControlFile(cf):
     if not os.path.isdir(file_path):
         os.makedirs(file_path)
     # work through the choices in the [Options] section
+    opt = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "ApplyMADFilter", default = "")
+    inc["ApplyMADFilter"] = str(opt)
+    opt = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "ApplyFco2Storage", default = "No")
+    inc["ApplyFco2Storage"] = str(opt)
     opt = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "NumberOfDimensions", default=3)
     inc["NumberOfDimensions"] = int(opt)
     opt = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "MaxGapInterpolate", default=0)
@@ -520,7 +530,7 @@ def ParseConcatenateControlFile(cf):
     inc["chrono_files"] = []
     inc["labels"] = []
     inc["attributes"] = ["height", "instrument", "long_name", "standard_name",
-                         "statistic_type", "units", "valid_range"]
+                         "statistic_type", "units", "valid_range", "MAD filter"]
     # add key for suppressing output of intermediate variables e.g. Cpd etc
     opt = pfp_utils.get_keyvaluefromcf(cf, ["Options"], "KeepIntermediateSeries", default="No")
     info["RemoveIntermediateSeries"] = {"KeepIntermediateSeries": opt, "not_output": []}
@@ -567,13 +577,11 @@ def ParseL3ControlFile(cfg, ds):
     """
     # PRI 7/10/2021 the code to get zms will give unpredictable results if CO2
     #   profile data present
-    l3_info = {"status": {"value": 0, "message": "OK"},
-               "cfg": {},
+    l3_info = {"status": {"value": 0, "message": "OK", "ok": True},
                "variables": {"CO2": {}, "Fco2": {}, "Sco2": {}},
                "CombineSeries": {}}
-    # copy the control file sections to the l3_info dictionary
-    for section in list(cfg.keys()):
-        l3_info["cfg"][section] = copy.deepcopy(cfg[section])
+    # copy the control file into the l3_info dictionary
+    l3_info["cfg"] = copy.deepcopy(cfg)
     # add key for suppressing output of intermediate variables e.g. Cpd etc
     opt = pfp_utils.get_keyvaluefromcf(cfg, ["Options"], "KeepIntermediateSeries", default="No")
     l3_info["RemoveIntermediateSeries"] = {"KeepIntermediateSeries": opt, "not_output": []}
@@ -734,9 +742,12 @@ def check_l1_controlfile(cfg):
     Author: PRI
     Date: October 2021
     """
+    ok = True
+    # compliance checks not applied for L1 nc2csv_oneflux
+    if cfg["level"] in ["L1_oneflux"]:
+        return ok
     # quick and dirty use of try...except in a panic ahead to 2021 workshop
     try:
-        ok = True
         cfg_labels = sorted(list(cfg["Variables"].keys()))
         base_path = pfp_utils.get_base_path()
         std_name = os.path.join(base_path, "controlfiles", "standard", "check_l1_controlfile.txt")
@@ -795,8 +806,8 @@ def check_l2_controlfile(cfg):
     Date: October 2022
     """
     # quick and dirty use of try...except in a panic ahead to 2021 workshop
+    ok = True
     try:
-        ok = True
         # initialise the messages dictionary
         messages = {"ERROR":[], "WARNING": [], "INFO": [], "DEBUG": [], "RESULT": "ignore"}
         # check the files section
@@ -818,8 +829,8 @@ def check_l2_controlfile(cfg):
 def check_l2_options(cfg, ds):
     """
     Purpose:
-     Check the options specified in the L3 control file are consistent
-     with the contents of the L2 netCDF file.
+     Check the options specified in the L2 control file are consistent
+     with the contents of the L1 netCDF file.
     Usage:
     Side effects:
     Author: PRI
@@ -1046,7 +1057,7 @@ def check_l3_options_generic(cfg, messages):
         if Fco2_units not in ["umol/m^2/s", "mg/m^2/s"]:
             msg = "Unrecognised Fco2 units (" + Fco2_units + "), must be umol/m^2/s or mg/m^2/s"
             messages["ERROR"].append(msg)
-    for item in ["2DCoordRotation", "ApplyFco2Storage", "ApplyWPL", "CalculateFluxes",
+    for item in ["2DCoordRotation", "ApplyFco2Storage", "CalculateFluxes",
                  "CorrectFgForStorage", "CorrectIndividualFg", "KeepIntermediateSeries",
                  "MassmanCorrection", ]:
         if item in cfg["Options"]:
@@ -1629,8 +1640,8 @@ def l1_check_irga_sonic_type(cfg, messages):
     return
 def l1_check_irga_only(cfg, irga_only_labels, messages):
     """ Check instrument attribute of variables that depend only on the IRGA"""
-    if len(irga_only_labels) == 0:
-        return
+    #if len(irga_only_labels) == 0:
+        #return
     open_path_irgas = list(c.instruments["irgas"]["open_path"].keys())
     closed_path_irgas = list(c.instruments["irgas"]["closed_path"].keys())
     known_irgas = open_path_irgas + closed_path_irgas
@@ -1638,6 +1649,8 @@ def l1_check_irga_only(cfg, irga_only_labels, messages):
     for label in list(irga_only_labels):
         if label not in cfg_labels:
             irga_only_labels.remove(label)
+    if len(irga_only_labels) == 0:
+        return
     irga_check = {}
     for label in irga_only_labels:
         if "instrument" in cfg["Variables"][label]["Attr"]:
@@ -1668,13 +1681,15 @@ def l1_check_irga_only(cfg, irga_only_labels, messages):
     return
 def l1_check_sonic_only(cfg, sonic_only_labels, messages):
     """ Check instrument attribute of variables that depend only on the sonic."""
-    if len(sonic_only_labels) == 0:
-        return
+    #if len(sonic_only_labels) == 0:
+        #return
     known_sonics = list(c.instruments["sonics"].keys())
     cfg_labels = sorted(list(cfg["Variables"].keys()))
     for label in list(sonic_only_labels):
         if label not in cfg_labels:
             sonic_only_labels.remove(label)
+    if len(sonic_only_labels) == 0:
+        return
     sonic_check = {}
     for label in sonic_only_labels:
         if "instrument" in cfg["Variables"][label]["Attr"]:
@@ -1718,8 +1733,8 @@ def l1_check_sonic_irga(cfg, sonic_irga_labels, messages):
     Author: PRI
     Date: November 2022
     """
-    if len(sonic_irga_labels) == 0:
-        return
+    #if len(sonic_irga_labels) == 0:
+        #return
     open_path_irgas = list(c.instruments["irgas"]["open_path"].keys())
     closed_path_irgas = list(c.instruments["irgas"]["closed_path"].keys())
     known_irgas = open_path_irgas + closed_path_irgas
@@ -1728,6 +1743,8 @@ def l1_check_sonic_irga(cfg, sonic_irga_labels, messages):
     for sonic_irga_label in list(sonic_irga_labels):
         if sonic_irga_label not in cfg_labels:
             sonic_irga_labels.remove(sonic_irga_label)
+    if len(sonic_irga_labels) == 0:
+        return
     sonic_check = {}
     irga_check = {}
     for sonic_irga_label in sonic_irga_labels:
@@ -1776,7 +1793,7 @@ def l1_check_sonic_irga(cfg, sonic_irga_labels, messages):
         messages["ERROR"].append(msg)
     elif len(sonic_types) == 1:
         cfg["Global"]["sonic_type"] = str(sonic_types[0])
-        msg = "Sonic type set to " + cfg["Global"]["sonic_type"]
+        msg = " Sonic type set to " + cfg["Global"]["sonic_type"]
         logger.info(msg)
     else:
         msg = "More than 1 sonic type specified (" + ",".join(sonic_types) + ")"
@@ -1790,7 +1807,7 @@ def l1_check_sonic_irga(cfg, sonic_irga_labels, messages):
         messages["ERROR"].append(msg)
     elif len(irga_types) == 1:
         cfg["Global"]["irga_type"] = str(irga_types[0])
-        msg = "IRGA type set to " + cfg["Global"]["irga_type"]
+        msg = " IRGA type set to " + cfg["Global"]["irga_type"]
         logger.info(msg)
     else:
         msg = "More than 1 IRGA type specified (" + ",".join(irga_types) + ")"
@@ -1887,7 +1904,7 @@ def l1_make_variables_attributes_consistent(cfg, std, cfg_label, std_label, mess
             if msg not in messages["ERROR"]:
                 messages["ERROR"].append(msg)
     return
-def l1_update_controlfile(cfg):
+def l1_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the L1 control file to update the syntax from earlier OFQC/PFP versions
@@ -1901,6 +1918,11 @@ def l1_update_controlfile(cfg):
     Author: PRI
     Date: February 2020
     """
+    # initialise the return logical
+    ok = True
+    # update control file not applied for L1 nc2csv_oneflux
+    if cfg["level"] in ["L1_oneflux"]:
+        return ok
     # copy the control file
     cfg_original = copy.deepcopy(cfg)
     # check to see if we can load the update_control_files.txt standard control file
@@ -1923,14 +1945,13 @@ def l1_update_controlfile(cfg):
     except Exception:
         ok = False
         msg = " Unable to load standard control file " + chkname
-    # initialise the return logical
-    ok = True
     try:
         cfg = update_cfg_syntax(cfg, std)
     except Exception:
         ok = False
         msg = " An error occurred updating the L1 control file syntax"
-    # clean up the variable names
+    # clean up the options section
+    cfg = update_cfg_options(cfg, std, call_mode=call_mode)
     cfg = update_cfg_global_attributes(cfg, std)
     cfg = update_cfg_variables_deprecated(cfg, std)
     cfg = update_cfg_variables_rename(cfg, std)
@@ -2333,7 +2354,7 @@ def l2_check_options(cfg, messages):
         msg = "No Options section in control file, using defaults for all options"
         messages["WARNING"].append(msg)
     return
-def l2_update_controlfile(cfg):
+def l2_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the L2 control file to update the syntax from earlier OFQC/PFP versions
@@ -2367,7 +2388,7 @@ def l2_update_controlfile(cfg):
         msg = " An error occurred while updating the L2 control file syntax"
     # clean up the Options section
     try:
-        cfg = update_cfg_options(cfg, std)
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
     except Exception:
         ok = False
         msg = " An error occurred while updating the L2 control file Options section"
@@ -2573,7 +2594,7 @@ def update_cfg_variables_rename(cfg, std):
                         cfg["Plots"][plot][axis] = ",".join(vs)
     return cfg
 
-def l3_update_controlfile(cfg):
+def l3_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the L3 control file to update the syntax from earlier OFQC/PFP versions
@@ -2607,7 +2628,7 @@ def l3_update_controlfile(cfg):
         msg = " An error occurred while updating the L3 control file syntax"
     # clean up the variable names
     try:
-        cfg = update_cfg_options(cfg, std)
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_deprecated(cfg, std)
         cfg = update_cfg_variables_rename(cfg, std)
         cfg = update_cfg_variable_attributes(cfg, std)
@@ -2627,7 +2648,7 @@ def l3_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def update_cfg_options(cfg, std):
+def update_cfg_options(cfg, std, call_mode="interactive"):
     """
     Purpose:
      Update an L3 control file Options section.
@@ -2640,13 +2661,20 @@ def update_cfg_options(cfg, std):
     # make sure there is an Options section
     if "Options" not in cfg:
         cfg["Options"] = {}
+    # add the call mode and show plots options
+    cfg["Options"]["call_mode"] = call_mode
+    cfg["Options"]["show_plots"] = "Yes"
+    if call_mode == "batch":
+        cfg["Options"]["show_plots"] = "No"
     # move items from the General section (if it exists) to the Options section.
     if "General" in cfg:
         for item in cfg["General"]:
             cfg["Options"][item] = cfg["General"][item]
         del cfg["General"]
     # update the units in the Options section
-    if cfg["level"] == "L2":
+    if cfg["level"] == "L1":
+        pass
+    elif cfg["level"] == "L2":
         if "irga_type" in cfg["Options"]:
             irga_type = cfg["Options"]["irga_type"]
             if irga_type in ["Li-7500A (<V6.5)", "Li-7500A (>=V6.5)"]:
@@ -2657,22 +2685,6 @@ def update_cfg_options(cfg, std):
                 cfg["Options"].rename(item, item.replace("Fc", "Fco2"))
             if item in ["CcUnits"]:
                 cfg["Options"].rename(item, item.replace("Cc", "CO2"))
-        if "DisableFco2WPL" in list(cfg["Options"].keys()):
-            opt = cfg["Options"]["DisableFco2WPL"]
-            if opt.lower() == "no":
-                apply_wpl = "Yes"
-            else:
-                apply_wpl = "No"
-            cfg["Options"].pop("DisableFco2WPL")
-            cfg["Options"]["ApplyWPL"] = apply_wpl
-        if "DisableFeWPL" in list(cfg["Options"].keys()):
-            opt = cfg["Options"]["DisableFeWPL"]
-            if opt.lower() == "no":
-                apply_wpl = "Yes"
-            else:
-                apply_wpl = "No"
-            cfg["Options"].pop("DisableFeWPL")
-            cfg["Options"]["ApplyWPL"] = apply_wpl
         if "UseL2Fluxes" in list(cfg["Options"].keys()):
             opt = cfg["Options"]["UseL2Fluxes"]
             if opt.lower() == "no":
@@ -2681,6 +2693,11 @@ def update_cfg_options(cfg, std):
                 calculate_fluxes = "No"
             cfg["Options"].pop("UseL2Fluxes")
             cfg["Options"]["CalculateFluxes"] = calculate_fluxes
+        # remove deprecated L3 options
+        for item in ["DisableFco2WPL", "DisableFcWPL", "DisableFeWPL",
+                     "DisableWPL", "ApplyWPL"]:
+            if item in cfg["Options"]:
+                cfg["Options"].pop(item)
         old_units = list(std["Variables"]["units_map"].keys())
         for item in list(cfg["Options"].keys()):
             if cfg["Options"][item] in old_units:
@@ -2710,7 +2727,7 @@ def update_cfg_options(cfg, std):
                     cfg["Options"][option] = new_opt
     return cfg
 
-def l4_update_controlfile(cfg):
+def l4_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the L4 control file to make sure the syntax is correct and that the
@@ -2744,6 +2761,7 @@ def l4_update_controlfile(cfg):
         msg = " An error occurred while updating the L4 control file syntax"
     # clean up the variable names
     try:
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_deprecated(cfg, std)
         cfg = update_cfg_variables_rename(cfg, std)
         cfg = update_cfg_variable_attributes(cfg, std)
@@ -2763,7 +2781,7 @@ def l4_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def l5_update_controlfile(cfg):
+def l5_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the L5 control file to make sure the syntax is correct and that the
@@ -2797,7 +2815,7 @@ def l5_update_controlfile(cfg):
         msg = " An error occurred while updating the L5 control file syntax"
     # clean up the variable names
     try:
-        cfg = update_cfg_options(cfg, std)
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = update_cfg_variables_deprecated(cfg, std)
         cfg = update_cfg_variables_rename(cfg, std)
         cfg = update_cfg_variable_attributes(cfg, std)
@@ -2817,7 +2835,7 @@ def l5_update_controlfile(cfg):
         logger.error(error_message)
     return ok
 
-def l6_update_controlfile(cfg):
+def l6_update_controlfile(cfg, call_mode="interactive"):
     """
     Purpose:
      Parse the L6 control file to make sure the syntax is correct and that the
@@ -2860,6 +2878,7 @@ def l6_update_controlfile(cfg):
         msg = " An error occurred while updating the L6 control file syntax"
     # clean up the variable names
     try:
+        cfg = update_cfg_options(cfg, std, call_mode=call_mode)
         cfg = l6_update_cfg_variable_names(cfg, std)
         cfg = l6_update_cfg_variable_attributes(cfg, std)
     except Exception:
